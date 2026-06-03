@@ -31,7 +31,7 @@ export default defineManifest({
     {
       js: ['src/content/main.ts'],
       matches: ['<all_urls>'],
-      all_frames: true,
+      all_frames: false,
       match_about_blank: true,
       run_at: 'document_idle',
     },
