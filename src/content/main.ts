@@ -1,4 +1,5 @@
 import { buildDomAxTree, countAxTreeNodes } from './build-dom-ax-tree'
+import { startAxTreeObserver } from './observe-ax-tree'
 import type { DomAxTreeResultMessage } from '../shared/messages'
 
 if (window === window.top) {
@@ -15,5 +16,6 @@ if (window === window.top) {
     return true
   })
 
+  startAxTreeObserver()
   console.debug('[visual-screen-reader] content script loaded')
 }

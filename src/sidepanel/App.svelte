@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import AxTreeReaderView from '../lib/AxTreeReaderView.svelte'
   import type { AxTreeNode } from '../shared/ax-tree'
-  import type { BackgroundResponse } from '../shared/messages'
+  import type { AxTreeErrorMessage, AxTreePushMessage, BackgroundResponse } from '../shared/messages'
 
   let loading = $state(false)
+  let live = $state(false)
   let error = $state<string | null>(null)
   let tabTitle = $state('')
   let url = $state('')
@@ -11,50 +13,103 @@
   let nodeCount = $state(0)
   let view: 'tree' | 'raw' = $state('tree')
 
-  async function captureTree() {
-    loading = true
+  function applyAxTreeResult(response: AxTreePushMessage): void {
+    tabTitle = response.tabTitle
+    url = response.url
+    roots = response.roots
+    nodeCount = response.nodeCount
     error = null
-    roots = null
-    nodeCount = 0
+    live = true
+  }
+
+  async function captureTree(options: { silent?: boolean } = {}) {
+    const { silent = false } = options
+
+    if (!silent) {
+      loading = true
+      error = null
+      roots = null
+      nodeCount = 0
+    }
 
     try {
-      // @ts-ignore
       const response = (await chrome.runtime.sendMessage({
         type: 'GET_AX_TREE',
       })) as BackgroundResponse | undefined
 
       if (!response) {
-        error = 'No response from the extension background.'
+        if (!silent) error = 'No response from the extension background.'
         return
       }
 
       if (response.type === 'AX_TREE_ERROR') {
-        error = response.error
+        if (!silent) error = response.error
         return
       }
 
-      tabTitle = response.tabTitle
-      url = response.url
-      roots = response.roots
-      nodeCount = response.nodeCount
+      applyAxTreeResult(response)
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err)
+      if (!silent) error = err instanceof Error ? err.message : String(err)
     } finally {
-      loading = false
+      if (!silent) loading = false
     }
   }
+
+  onMount(() => {
+    let windowId: number | undefined
+
+    void (async () => {
+      const win = await chrome.windows.getCurrent()
+      windowId = win.id
+      if (windowId == null) return
+
+      await chrome.runtime.sendMessage({ type: 'SIDE_PANEL_OPEN', windowId })
+      await captureTree()
+    })()
+
+    const onMessage = (message: unknown) => {
+      if (!message || typeof message !== 'object') return
+      const typed = message as { type?: string }
+
+      if (typed.type === 'AX_TREE_RESULT') {
+        applyAxTreeResult(message as AxTreePushMessage)
+        return
+      }
+
+      if (typed.type === 'AX_TREE_ERROR') {
+        error = (message as AxTreeErrorMessage).error
+        roots = null
+        nodeCount = 0
+        live = true
+      }
+    }
+
+    chrome.runtime.onMessage.addListener(onMessage)
+
+    return () => {
+      chrome.runtime.onMessage.removeListener(onMessage)
+      if (windowId != null) {
+        void chrome.runtime.sendMessage({ type: 'SIDE_PANEL_CLOSE', windowId })
+      }
+    }
+  })
 </script>
 
 <main>
   <h1>Visual Screen Reader</h1>
   <p class="hint">
-    Builds an accessibility-style tree from the page DOM (roles, names, ARIA). No debugger
-    attachment — the page should not flash.
+    Builds an accessibility-style tree from the page DOM (roles, names, ARIA). Updates
+    automatically when the DOM, page, or active tab changes.
   </p>
 
-  <button type="button" onclick={captureTree} disabled={loading}>
-    {loading ? 'Capturing…' : 'Get accessibility tree'}
-  </button>
+  <div class="actions">
+    <button type="button" onclick={() => captureTree()} disabled={loading}>
+      {loading ? 'Capturing…' : 'Refresh tree'}
+    </button>
+    {#if live}
+      <span class="live-badge" title="Listening for DOM, navigation, and tab changes">Live</span>
+    {/if}
+  </div>
 
   {#if error}
     <p class="error" role="alert">{error}</p>
@@ -108,6 +163,22 @@
     color: #555;
     font-size: 0.875rem;
     margin: 0 0 1rem;
+  }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .live-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #0a7a2f;
+    background: #e6f6ec;
+    border: 1px solid #9ed4b0;
+    border-radius: 999px;
+    padding: 0.15rem 0.5rem;
   }
 
   button[type='button']:not(.tabs button) {
