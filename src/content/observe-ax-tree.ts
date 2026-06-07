@@ -1,4 +1,9 @@
-import { buildDomAxTree, countAxTreeNodes, getAxTreeNodeIdForElement } from './build-dom-ax-tree'
+import {
+  buildDomAxTree,
+  countAxTreeNodes,
+  getAxTreeNodeIdForElement,
+  getFocusedAxTreeNodeId,
+} from './build-dom-ax-tree'
 import type { DomAxTreeUpdatedMessage, DomFocusChangedMessage } from '../shared/messages'
 
 const DEBOUNCE_MS = 200
@@ -8,12 +13,17 @@ let debounceTimer: ReturnType<typeof setTimeout> | undefined
 
 function pushDomAxTreeUpdate(): void {
   const roots = buildDomAxTree()
+  const focusedNodeId = getFocusedAxTreeNodeId()
   const message: DomAxTreeUpdatedMessage = {
     type: 'DOM_AX_TREE_UPDATED',
     roots,
     nodeCount: countAxTreeNodes(roots),
+    focusedNodeId,
   }
   void chrome.runtime.sendMessage(message)
+
+  // Keep dedup state aligned after positional nodeIds may have changed.
+  lastFocusedNodeId = focusedNodeId
 }
 
 function scheduleDomAxTreeUpdate(): void {
@@ -54,10 +64,40 @@ function scheduleFocusChange(target: Element): void {
   }, FOCUS_DEBOUNCE_MS)
 }
 
+function scheduleFocusClear(): void {
+  clearTimeout(focusDebounceTimer)
+  focusDebounceTimer = setTimeout(() => {
+    if (!document.hasFocus()) {
+      pushFocusChange(null)
+      return
+    }
+
+    const active = document.activeElement
+    if (!(active instanceof Element) || active === document.body || active === document.documentElement) {
+      pushFocusChange(null)
+    } else {
+      pushFocusChange(getAxTreeNodeIdForElement(active))
+    }
+  }, FOCUS_DEBOUNCE_MS)
+}
+
 function onFocusIn(event: FocusEvent): void {
   const target = event.target
   if (!(target instanceof Element)) return
   scheduleFocusChange(target)
+}
+
+function onWindowBlur(): void {
+  scheduleFocusClear()
+}
+
+function onWindowFocus(): void {
+  const active = document.activeElement
+  if (active instanceof Element && active !== document.body && active !== document.documentElement) {
+    scheduleFocusChange(active)
+  } else {
+    pushFocusChange(null)
+  }
 }
 
 export function startAxTreeObserver(): void {
@@ -81,11 +121,10 @@ export function startAxTreeObserver(): void {
   navigation?.addEventListener('navigate', onRouteChange)
 
   document.addEventListener('focusin', onFocusIn, { capture: true, passive: true })
+  window.addEventListener('blur', onWindowBlur)
+  window.addEventListener('focus', onWindowFocus)
 
-  const active = document.activeElement
-  if (active instanceof Element) {
-    pushFocusChange(getAxTreeNodeIdForElement(active))
-  }
+  pushFocusChange(getFocusedAxTreeNodeId())
 
   scheduleDomAxTreeUpdate()
 }

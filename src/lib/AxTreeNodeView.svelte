@@ -35,14 +35,20 @@
 {/snippet}
 
 {#if node.ignored}
-  {@render childNodes()}
+  <span data-node-id={node.nodeId} class:sr-focused={focused} style="display: contents">
+    {@render childNodes()}
+  </span>
 {:else if isPassthroughRole(role)}
   {#if label}
     <p class="sr-text" data-node-id={node.nodeId} class:sr-focused={focused}>
       {label}{@render notes()}
     </p>
+    {@render childNodes()}
+  {:else}
+    <span data-node-id={node.nodeId} class:sr-focused={focused} style="display: contents">
+      {@render childNodes()}
+    </span>
   {/if}
-  {@render childNodes()}
 {:else if role === 'heading'}
   <svelte:element
     this={`h${hLevel}`}

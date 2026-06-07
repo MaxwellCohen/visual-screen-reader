@@ -35,7 +35,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     void (async () => {
       const update = message as DomAxTreeUpdatedMessage
-      await maybePushDomAxTreeUpdate(tabId, windowId, update.roots, update.nodeCount)
+      await maybePushDomAxTreeUpdate(tabId, windowId, update)
     })()
     return
   }
@@ -110,8 +110,7 @@ async function maybePushFocusChange(
 async function maybePushDomAxTreeUpdate(
   tabId: number,
   windowId: number,
-  roots: DomAxTreeUpdatedMessage['roots'],
-  nodeCount: number,
+  update: DomAxTreeUpdatedMessage,
 ): Promise<void> {
   if (!watchingWindows.has(windowId)) return
   if (!(await isActiveTab(tabId, windowId))) return
@@ -122,8 +121,9 @@ async function maybePushDomAxTreeUpdate(
     tabId,
     tabTitle: tab.title ?? '',
     url: tab.url ?? '',
-    roots,
-    nodeCount,
+    roots: update.roots,
+    nodeCount: update.nodeCount,
+    focusedNodeId: update.focusedNodeId,
     source: 'dom',
   }
   void chrome.runtime.sendMessage(push)

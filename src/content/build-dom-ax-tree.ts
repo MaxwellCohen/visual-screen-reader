@@ -267,10 +267,19 @@ function nodeIdPathFromBody(el: Element): string | null {
   return `body.${path.join('.')}`
 }
 
-export function isElementInAxTree(el: Element): boolean {
-  const nodeId = nodeIdPathFromBody(el)
-  if (!nodeId) return false
-  return walkElement(el, nodeId) != null
+/** Whether an element would appear in the DOM-derived AX tree (without building it). */
+function elementIncludedInAxTree(el: Element): boolean {
+  const tag = el.tagName.toLowerCase()
+  if (IGNORED_TAGS.has(tag) || isHidden(el)) return false
+
+  if (el.getAttribute('aria-hidden') === 'true') {
+    for (const child of el.children) {
+      if (elementIncludedInAxTree(child)) return true
+    }
+    return false
+  }
+
+  return true
 }
 
 /** Nearest ancestor (or self) that appears in the DOM-derived AX tree. */
@@ -278,10 +287,17 @@ export function getAxTreeNodeIdForElement(el: Element): string | null {
   let current: Element | null = el
   while (current && current !== document.documentElement) {
     if (current === document.body) return 'body'
-    if (isElementInAxTree(current)) return nodeIdPathFromBody(current)
+    if (elementIncludedInAxTree(current)) return nodeIdPathFromBody(current)
     current = current.parentElement
   }
   return null
+}
+
+export function getFocusedAxTreeNodeId(): string | null {
+  const active = document.activeElement
+  if (!(active instanceof Element)) return null
+  if (active === document.body || active === document.documentElement) return null
+  return getAxTreeNodeIdForElement(active)
 }
 
 export function buildDomAxTree(): AxTreeNode[] {

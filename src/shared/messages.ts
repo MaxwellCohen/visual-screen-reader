@@ -13,6 +13,7 @@ export type DomAxTreeUpdatedMessage = {
   type: 'DOM_AX_TREE_UPDATED'
   roots: AxTreeNode[]
   nodeCount: number
+  focusedNodeId: string | null
 }
 
 export type DomFocusChangedMessage = {
@@ -30,7 +31,7 @@ export type AxTreeResultMessage = {
   url: string
   roots: AxTreeNode[]
   nodeCount: number
-  focusedNodeId?: string | null
+  focusedNodeId: string | null
   source: 'dom'
 }
 

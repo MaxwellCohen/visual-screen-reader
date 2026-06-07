@@ -15,6 +15,7 @@
   let error = $state<string | null>(null)
   let tabTitle = $state('')
   let url = $state('')
+  let tabId = $state<number | null>(null)
   let roots = $state<AxTreeNode[] | null>(null)
   let nodeCount = $state(0)
   let focusedNodeId = $state<string | null>(null)
@@ -28,13 +29,12 @@
   )
 
   function applyAxTreeResult(response: AxTreePushMessage): void {
+    tabId = response.tabId
     tabTitle = response.tabTitle
     url = response.url
     roots = response.roots
     nodeCount = response.nodeCount
-    if (response.focusedNodeId !== undefined) {
-      focusedNodeId = response.focusedNodeId
-    }
+    focusedNodeId = response.focusedNodeId
     error = null
     live = true
   }
@@ -47,6 +47,7 @@
       error = null
       roots = null
       nodeCount = 0
+      focusedNodeId = null
     }
 
     try {
@@ -94,7 +95,9 @@
       }
 
       if (typed.type === 'AX_TREE_FOCUS') {
-        focusedNodeId = (message as AxTreeFocusMessage).nodeId
+        const focus = message as AxTreeFocusMessage
+        if (tabId != null && focus.tabId !== tabId) return
+        focusedNodeId = focus.nodeId
         return
       }
 
@@ -102,6 +105,7 @@
         error = (message as AxTreeErrorMessage).error
         roots = null
         nodeCount = 0
+        focusedNodeId = null
         live = true
       }
     }
