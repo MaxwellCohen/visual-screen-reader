@@ -241,6 +241,49 @@ function walkElement(el: Element, nodeId: string): AxTreeNode | null {
   }
 }
 
+function childIndexAmongSiblings(el: Element): number {
+  const parent = el.parentElement
+  if (!parent) return -1
+  for (let i = 0; i < parent.children.length; i++) {
+    if (parent.children[i] === el) return i
+  }
+  return -1
+}
+
+function nodeIdPathFromBody(el: Element): string | null {
+  if (el === document.body) return 'body'
+
+  const path: number[] = []
+  let current: Element | null = el
+
+  while (current && current !== document.body) {
+    const index = childIndexAmongSiblings(current)
+    if (index < 0) return null
+    path.unshift(index)
+    current = current.parentElement
+  }
+
+  if (current !== document.body) return null
+  return `body.${path.join('.')}`
+}
+
+export function isElementInAxTree(el: Element): boolean {
+  const nodeId = nodeIdPathFromBody(el)
+  if (!nodeId) return false
+  return walkElement(el, nodeId) != null
+}
+
+/** Nearest ancestor (or self) that appears in the DOM-derived AX tree. */
+export function getAxTreeNodeIdForElement(el: Element): string | null {
+  let current: Element | null = el
+  while (current && current !== document.documentElement) {
+    if (current === document.body) return 'body'
+    if (isElementInAxTree(current)) return nodeIdPathFromBody(current)
+    current = current.parentElement
+  }
+  return null
+}
+
 export function buildDomAxTree(): AxTreeNode[] {
   const roots: AxTreeNode[] = []
 

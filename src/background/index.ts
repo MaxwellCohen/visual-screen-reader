@@ -1,9 +1,11 @@
 import type {
+  AxTreeFocusMessage,
   AxTreePushMessage,
   BackgroundResponse,
   ContentRequest,
   ContentResponse,
   DomAxTreeUpdatedMessage,
+  DomFocusChangedMessage,
 } from '../shared/messages'
 
 const watchingWindows = new Set<number>()
@@ -34,6 +36,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     void (async () => {
       const update = message as DomAxTreeUpdatedMessage
       await maybePushDomAxTreeUpdate(tabId, windowId, update.roots, update.nodeCount)
+    })()
+    return
+  }
+
+  if (message?.type === 'DOM_FOCUS_CHANGED') {
+    const tabId = sender.tab?.id
+    const windowId = sender.tab?.windowId
+    if (tabId == null || windowId == null) return
+
+    void (async () => {
+      const update = message as DomFocusChangedMessage
+      await maybePushFocusChange(tabId, windowId, update.nodeId)
     })()
     return
   }
@@ -75,6 +89,22 @@ function scheduleTabCapture(tabId: number, windowId: number): void {
 async function isActiveTab(tabId: number, windowId: number): Promise<boolean> {
   const [active] = await chrome.tabs.query({ active: true, windowId })
   return active?.id === tabId
+}
+
+async function maybePushFocusChange(
+  tabId: number,
+  windowId: number,
+  nodeId: string | null,
+): Promise<void> {
+  if (!watchingWindows.has(windowId)) return
+  if (!(await isActiveTab(tabId, windowId))) return
+
+  const push: AxTreeFocusMessage = {
+    type: 'AX_TREE_FOCUS',
+    tabId,
+    nodeId,
+  }
+  void chrome.runtime.sendMessage(push)
 }
 
 async function maybePushDomAxTreeUpdate(
@@ -147,6 +177,7 @@ async function captureTabAxTree(tabId: number): Promise<BackgroundResponse> {
       url: tab.url,
       roots: domTree.roots,
       nodeCount: domTree.nodeCount,
+      focusedNodeId: domTree.focusedNodeId,
       source: 'dom',
     }
   } catch (err) {

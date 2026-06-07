@@ -2,7 +2,13 @@
   import { onMount } from 'svelte'
   import AxTreeReaderView from '../lib/AxTreeReaderView.svelte'
   import type { AxTreeNode } from '../shared/ax-tree'
-  import type { AxTreeErrorMessage, AxTreePushMessage, BackgroundResponse } from '../shared/messages'
+  import { findAxTreeNode, getSpeakableLabel } from '../lib/ax-tree-speech'
+  import type {
+    AxTreeErrorMessage,
+    AxTreeFocusMessage,
+    AxTreePushMessage,
+    BackgroundResponse,
+  } from '../shared/messages'
 
   let loading = $state(false)
   let live = $state(false)
@@ -11,13 +17,24 @@
   let url = $state('')
   let roots = $state<AxTreeNode[] | null>(null)
   let nodeCount = $state(0)
+  let focusedNodeId = $state<string | null>(null)
   let view: 'tree' | 'raw' = $state('tree')
+
+  const focusedNode = $derived(
+    roots && focusedNodeId ? findAxTreeNode(roots, focusedNodeId) : null,
+  )
+  const focusedLabel = $derived(
+    focusedNode ? getSpeakableLabel(focusedNode) ?? focusedNode.role ?? 'Element' : null,
+  )
 
   function applyAxTreeResult(response: AxTreePushMessage): void {
     tabTitle = response.tabTitle
     url = response.url
     roots = response.roots
     nodeCount = response.nodeCount
+    if (response.focusedNodeId !== undefined) {
+      focusedNodeId = response.focusedNodeId
+    }
     error = null
     live = true
   }
@@ -73,6 +90,11 @@
 
       if (typed.type === 'AX_TREE_RESULT') {
         applyAxTreeResult(message as AxTreePushMessage)
+        return
+      }
+
+      if (typed.type === 'AX_TREE_FOCUS') {
+        focusedNodeId = (message as AxTreeFocusMessage).nodeId
         return
       }
 
@@ -139,7 +161,16 @@
       </div>
 
       {#if view === 'tree'}
-        <AxTreeReaderView {roots} />
+        {#if focusedLabel}
+          <p class="focus-indicator" aria-live="polite">
+            <span class="focus-label">In focus:</span>
+            {#if focusedNode?.role}
+              <span class="focus-role">{focusedNode.role}</span>
+            {/if}
+            <span class="focus-name">{focusedLabel}</span>
+          </p>
+        {/if}
+        <AxTreeReaderView {roots} {focusedNodeId} />
       {:else}
         <pre class="tree-output">{JSON.stringify(roots, null, 2)}</pre>
       {/if}
@@ -216,6 +247,32 @@
   .stats {
     font-size: 0.875rem;
     margin: 0 0 0.75rem;
+  }
+
+  .focus-indicator {
+    font-size: 0.8125rem;
+    margin: 0 0 0.75rem;
+    padding: 0.5rem 0.65rem;
+    border-radius: 4px;
+    background: color-mix(in srgb, #2563eb 12%, var(--bg));
+    border: 1px solid color-mix(in srgb, #2563eb 35%, transparent);
+    color: var(--text-h);
+  }
+
+  .focus-label {
+    font-weight: 600;
+    margin-right: 0.35rem;
+  }
+
+  .focus-role {
+    font-size: 0.75rem;
+    text-transform: capitalize;
+    color: var(--text);
+    margin-right: 0.35rem;
+  }
+
+  .focus-name {
+    font-weight: 500;
   }
 
   .tabs {

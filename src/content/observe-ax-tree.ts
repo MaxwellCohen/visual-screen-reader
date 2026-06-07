@@ -1,7 +1,8 @@
-import { buildDomAxTree, countAxTreeNodes } from './build-dom-ax-tree'
-import type { DomAxTreeUpdatedMessage } from '../shared/messages'
+import { buildDomAxTree, countAxTreeNodes, getAxTreeNodeIdForElement } from './build-dom-ax-tree'
+import type { DomAxTreeUpdatedMessage, DomFocusChangedMessage } from '../shared/messages'
 
 const DEBOUNCE_MS = 200
+const FOCUS_DEBOUNCE_MS = 100
 
 let debounceTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -32,6 +33,33 @@ function patchHistoryMethod(method: 'pushState' | 'replaceState'): void {
   }
 }
 
+let focusDebounceTimer: ReturnType<typeof setTimeout> | undefined
+let lastFocusedNodeId: string | null | undefined
+
+function pushFocusChange(nodeId: string | null): void {
+  if (nodeId === lastFocusedNodeId) return
+  lastFocusedNodeId = nodeId
+
+  const message: DomFocusChangedMessage = {
+    type: 'DOM_FOCUS_CHANGED',
+    nodeId,
+  }
+  void chrome.runtime.sendMessage(message)
+}
+
+function scheduleFocusChange(target: Element): void {
+  clearTimeout(focusDebounceTimer)
+  focusDebounceTimer = setTimeout(() => {
+    pushFocusChange(getAxTreeNodeIdForElement(target))
+  }, FOCUS_DEBOUNCE_MS)
+}
+
+function onFocusIn(event: FocusEvent): void {
+  const target = event.target
+  if (!(target instanceof Element)) return
+  scheduleFocusChange(target)
+}
+
 export function startAxTreeObserver(): void {
   const observer = new MutationObserver(() => {
     scheduleDomAxTreeUpdate()
@@ -51,6 +79,13 @@ export function startAxTreeObserver(): void {
 
   const navigation = (window as Window & { navigation?: EventTarget }).navigation
   navigation?.addEventListener('navigate', onRouteChange)
+
+  document.addEventListener('focusin', onFocusIn, { capture: true, passive: true })
+
+  const active = document.activeElement
+  if (active instanceof Element) {
+    pushFocusChange(getAxTreeNodeIdForElement(active))
+  }
 
   scheduleDomAxTreeUpdate()
 }

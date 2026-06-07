@@ -6,12 +6,18 @@ export type DomAxTreeResultMessage = {
   type: 'DOM_AX_TREE_RESULT'
   roots: AxTreeNode[]
   nodeCount: number
+  focusedNodeId: string | null
 }
 
 export type DomAxTreeUpdatedMessage = {
   type: 'DOM_AX_TREE_UPDATED'
   roots: AxTreeNode[]
   nodeCount: number
+}
+
+export type DomFocusChangedMessage = {
+  type: 'DOM_FOCUS_CHANGED'
+  nodeId: string | null
 }
 
 export type SidePanelOpenMessage = { type: 'SIDE_PANEL_OPEN'; windowId: number }
@@ -24,7 +30,14 @@ export type AxTreeResultMessage = {
   url: string
   roots: AxTreeNode[]
   nodeCount: number
+  focusedNodeId?: string | null
   source: 'dom'
+}
+
+export type AxTreeFocusMessage = {
+  type: 'AX_TREE_FOCUS'
+  tabId: number
+  nodeId: string | null
 }
 
 export type AxTreeErrorMessage = {
@@ -40,7 +53,7 @@ export type ContentRequest = GetAxTreeMessage
 
 export type ContentResponse = DomAxTreeResultMessage
 
-export type ContentToBackgroundMessage = DomAxTreeUpdatedMessage
+export type ContentToBackgroundMessage = DomAxTreeUpdatedMessage | DomFocusChangedMessage
 
 export type SidePanelToBackgroundMessage =
   | GetAxTreeMessage

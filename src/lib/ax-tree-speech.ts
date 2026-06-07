@@ -100,3 +100,12 @@ export function formatNotes(stateNotes: string[], roleNotes: string[]): string {
   const all = [...roleNotes, ...stateNotes]
   return all.length > 0 ? all.join(', ') : ''
 }
+
+export function findAxTreeNode(roots: AxTreeNode[], nodeId: string): AxTreeNode | null {
+  for (const root of roots) {
+    if (root.nodeId === nodeId) return root
+    const found = findAxTreeNode(root.children, nodeId)
+    if (found) return found
+  }
+  return null
+}

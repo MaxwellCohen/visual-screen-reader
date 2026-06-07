@@ -12,13 +12,14 @@
   } from './ax-tree-speech'
   import AxTreeNodeView from './AxTreeNodeView.svelte'
 
-  let { node }: { node: AxTreeNode } = $props()
+  let { node, focusedNodeId = null }: { node: AxTreeNode; focusedNodeId?: string | null } = $props()
 
   const label = $derived(getSpeakableLabel(node))
   const notesText = $derived(formatNotes(getStateNotes(node), getRoleNotes(node)))
   const dedup = $derived(shouldDedupChildren(node))
   const role = $derived(node.role ?? 'generic')
   const hLevel = $derived(headingLevel(node.level))
+  const focused = $derived(focusedNodeId === node.nodeId)
 </script>
 
 {#snippet notes()}
@@ -29,7 +30,7 @@
 
 {#snippet childNodes()}
   {#each node.children as child (child.nodeId)}
-    <AxTreeNodeView node={child} />
+    <AxTreeNodeView node={child} {focusedNodeId} />
   {/each}
 {/snippet}
 
@@ -37,13 +38,18 @@
   {@render childNodes()}
 {:else if isPassthroughRole(role)}
   {#if label}
-    <p class="sr-text">
+    <p class="sr-text" data-node-id={node.nodeId} class:sr-focused={focused}>
       {label}{@render notes()}
     </p>
   {/if}
   {@render childNodes()}
 {:else if role === 'heading'}
-  <svelte:element this={`h${hLevel}`} class="sr-heading">
+  <svelte:element
+    this={`h${hLevel}`}
+    class="sr-heading"
+    data-node-id={node.nodeId}
+    class:sr-focused={focused}
+  >
     {#if dedup}
       {label}{@render notes()}
     {:else}
@@ -53,7 +59,7 @@
     {/if}
   </svelte:element>
 {:else if role === 'image'}
-  <p class="sr-image">
+  <p class="sr-image" data-node-id={node.nodeId} class:sr-focused={focused}>
     {#if label}
       <em>[Image: {label}]</em>
     {:else}
@@ -62,7 +68,7 @@
     {@render notes()}
   </p>
 {:else if role === 'link'}
-  <span class="sr-link">
+  <span class="sr-link" data-node-id={node.nodeId} class:sr-focused={focused}>
     {#if dedup}
       {label}{@render notes()}
     {:else}
@@ -72,7 +78,7 @@
     {/if}
   </span>
 {:else if role === 'button'}
-  <span class="sr-button">
+  <span class="sr-button" data-node-id={node.nodeId} class:sr-focused={focused}>
     {#if dedup}
       <button type="button" disabled>{label}</button>{@render notes()}
     {:else}
@@ -84,7 +90,7 @@
     {/if}
   </span>
 {:else if role === 'checkbox' || role === 'radio'}
-  <p class="sr-control">
+  <p class="sr-control" data-node-id={node.nodeId} class:sr-focused={focused}>
     <span class="sr-role">{role}</span>
     {#if label}
       {label}
@@ -95,7 +101,7 @@
     {/if}
   </p>
 {:else if role === 'paragraph'}
-  <p class="sr-text">
+  <p class="sr-text" data-node-id={node.nodeId} class:sr-focused={focused}>
     {#if dedup}
       {label}{@render notes()}
     {:else}
@@ -105,17 +111,22 @@
     {/if}
   </p>
 {:else if role === 'list'}
-  <ul class="sr-list">
+  <ul class="sr-list" data-node-id={node.nodeId} class:sr-focused={focused}>
     {@render childNodes()}
   </ul>
 {:else if role === 'listitem'}
-  <li class="sr-listitem">
+  <li class="sr-listitem" data-node-id={node.nodeId} class:sr-focused={focused}>
     {#if label}{label}{/if}
     {@render childNodes()}
     {@render notes()}
   </li>
 {:else if isLandmarkRole(role)}
-  <section class="sr-landmark" data-role={role}>
+  <section
+    class="sr-landmark"
+    data-role={role}
+    data-node-id={node.nodeId}
+    class:sr-focused={focused}
+  >
     <span class="sr-landmark-label">{role}</span>
     {#if label && !dedup}
       <p class="sr-landmark-name">{label}</p>
@@ -125,11 +136,17 @@
   </section>
 {:else}
   {#if label}
-    <p class="sr-text">
+    <p class="sr-text" data-node-id={node.nodeId} class:sr-focused={focused}>
       {label}{@render notes()}
     </p>
   {/if}
   {#if !dedup}
-    {@render childNodes()}
+    {#if !label}
+      <span data-node-id={node.nodeId} class:sr-focused={focused} style="display: contents">
+        {@render childNodes()}
+      </span>
+    {:else}
+      {@render childNodes()}
+    {/if}
   {/if}
 {/if}

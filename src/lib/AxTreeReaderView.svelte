@@ -2,12 +2,28 @@
   import type { AxTreeNode } from '../shared/ax-tree'
   import AxTreeNodeView from './AxTreeNodeView.svelte'
 
-  let { roots }: { roots: AxTreeNode[] } = $props()
+  let {
+    roots,
+    focusedNodeId = null,
+  }: {
+    roots: AxTreeNode[]
+    focusedNodeId?: string | null
+  } = $props()
+
+  let container: HTMLDivElement | undefined = $state()
+
+  $effect(() => {
+    const nodeId = focusedNodeId
+    if (!nodeId || !container) return
+
+    const el = container.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(nodeId)}"]`)
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  })
 </script>
 
-<div class="ax-speech-output">
+<div class="ax-speech-output" bind:this={container}>
   {#each roots as root (root.nodeId)}
-    <AxTreeNodeView node={root} />
+    <AxTreeNodeView node={root} {focusedNodeId} />
   {/each}
 </div>
 
@@ -114,5 +130,12 @@
   .ax-speech-output :global(p) {
     margin: 0.25rem 0;
     color: var(--text-h);
+  }
+
+  .ax-speech-output :global(.sr-focused) {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+    border-radius: 3px;
+    background: color-mix(in srgb, #2563eb 10%, transparent);
   }
 </style>
