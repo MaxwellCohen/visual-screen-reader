@@ -1,8 +1,7 @@
 import {
-  buildDomAxTree,
-  countAxTreeNodes,
   getAxTreeNodeIdForElement,
   getFocusedAxTreeNodeId,
+  stampDomNodeIds,
 } from './build-dom-ax-tree'
 import type { DomAxTreeUpdatedMessage, DomFocusChangedMessage } from '../shared/messages'
 
@@ -12,12 +11,10 @@ const FOCUS_DEBOUNCE_MS = 100
 let debounceTimer: ReturnType<typeof setTimeout> | undefined
 
 function pushDomAxTreeUpdate(): void {
-  const roots = buildDomAxTree()
+  stampDomNodeIds()
   const focusedNodeId = getFocusedAxTreeNodeId()
   const message: DomAxTreeUpdatedMessage = {
     type: 'DOM_AX_TREE_UPDATED',
-    roots,
-    nodeCount: countAxTreeNodes(roots),
     focusedNodeId,
   }
   void chrome.runtime.sendMessage(message)

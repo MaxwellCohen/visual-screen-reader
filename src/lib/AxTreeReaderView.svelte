@@ -12,6 +12,10 @@
 
   let container: HTMLDivElement | undefined = $state()
 
+  export function getHtml(): string {
+    return container?.innerHTML ?? ''
+  }
+
   $effect(() => {
     const nodeId = focusedNodeId
     if (!nodeId || !container) return
@@ -90,6 +94,10 @@
     font-size: 0.75rem;
     color: var(--text);
     margin-right: 0.35rem;
+  }
+
+  .ax-speech-output :global(.sr-div) {
+    display: block;
   }
 
   .ax-speech-output :global(.sr-list) {

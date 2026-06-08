@@ -9,10 +9,9 @@ export type DomAxTreeResultMessage = {
   focusedNodeId: string | null
 }
 
+/** DOM change trigger — content script stamps node ids; background fetches CDP tree. */
 export type DomAxTreeUpdatedMessage = {
   type: 'DOM_AX_TREE_UPDATED'
-  roots: AxTreeNode[]
-  nodeCount: number
   focusedNodeId: string | null
 }
 
@@ -32,7 +31,9 @@ export type AxTreeResultMessage = {
   roots: AxTreeNode[]
   nodeCount: number
   focusedNodeId: string | null
-  source: 'dom'
+  source: 'cdp' | 'dom'
+  /** Set when CDP capture failed and the DOM-derived tree was used instead. */
+  cdpError?: string
 }
 
 export type AxTreeFocusMessage = {

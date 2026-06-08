@@ -1,5 +1,7 @@
 import type { AxTreeNode } from '../shared/ax-tree'
 
+export const DOM_NODE_ID_ATTR = 'data-vsr-node-id'
+
 const IGNORED_TAGS = new Set([
   'script',
   'style',
@@ -300,6 +302,45 @@ export function getFocusedAxTreeNodeId(): string | null {
   return getAxTreeNodeIdForElement(active)
 }
 
+function stampElement(el: Element, nodeId: string): void {
+  el.setAttribute(DOM_NODE_ID_ATTR, nodeId)
+}
+
+function clearStamp(el: Element): void {
+  el.removeAttribute(DOM_NODE_ID_ATTR)
+}
+
+function stampElementTree(el: Element, nodeId: string): void {
+  const tag = el.tagName.toLowerCase()
+  if (IGNORED_TAGS.has(tag) || isHidden(el)) {
+    clearStamp(el)
+    return
+  }
+
+  const ignored = el.getAttribute('aria-hidden') === 'true'
+  let hasIncludedChild = false
+  let childIndex = 0
+
+  for (const child of el.children) {
+    const childNodeId = `${nodeId}.${childIndex}`
+    childIndex += 1
+    stampElementTree(child, childNodeId)
+    if (child.hasAttribute(DOM_NODE_ID_ATTR)) hasIncludedChild = true
+  }
+
+  if (ignored && !hasIncludedChild) {
+    clearStamp(el)
+    return
+  }
+
+  stampElement(el, nodeId)
+}
+
+/** Stamp stable DOM paths on elements so CDP AX nodes can be linked back to the page. */
+export function stampDomNodeIds(): void {
+  if (document.body) stampElementTree(document.body, 'body')
+}
+
 export function buildDomAxTree(): AxTreeNode[] {
   const roots: AxTreeNode[] = []
 
@@ -309,11 +350,4 @@ export function buildDomAxTree(): AxTreeNode[] {
   }
 
   return roots
-}
-
-export function countAxTreeNodes(forest: AxTreeNode[]): number {
-  return forest.reduce(
-    (sum, node) => sum + 1 + countAxTreeNodes(node.children),
-    0,
-  )
 }

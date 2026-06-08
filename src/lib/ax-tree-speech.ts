@@ -1,4 +1,5 @@
 import type { AxTreeNode } from '../shared/ax-tree'
+import { getAxTreeFocusId } from '../shared/ax-tree'
 
 const PASSTHROUGH_ROLES = new Set(['generic', 'none', 'presentation'])
 
@@ -14,7 +15,22 @@ const LANDMARK_ROLES = new Set([
   'article',
 ])
 
-const DEDUP_ROLES = new Set(['heading', 'link', 'button', 'image'])
+const DEDUP_ROLES = new Set([
+  'heading',
+  'link',
+  'button',
+  'image',
+  'statictext',
+  'menuitem',
+  'menuitemcheckbox',
+  'menuitemradio',
+  'option',
+  'tab',
+  'treeitem',
+])
+
+/** CDP text fragments whose parent already exposes the same label. */
+const REDUNDANT_TEXT_ROLES = new Set(['inlinetextbox', 'statictext'])
 
 export function getSpeakableLabel(node: AxTreeNode): string | undefined {
   const label = (node.name ?? node.content)?.trim()
@@ -31,13 +47,26 @@ export function isPassthroughRole(role: string | undefined): boolean {
   return role != null && PASSTHROUGH_ROLES.has(role)
 }
 
+/** Generic containers (e.g. layout divs) render as block elements when they have children. */
+export function isGenericContainer(node: AxTreeNode): boolean {
+  const role = node.role ?? 'generic'
+  return role === 'generic' && node.children.length > 0
+}
+
 export function isLandmarkRole(role: string | undefined): boolean {
   return role != null && LANDMARK_ROLES.has(role)
 }
 
 export function shouldDedupChildren(node: AxTreeNode): boolean {
-  const role = node.role
+  const role = node.role?.toLowerCase()
   return role != null && DEDUP_ROLES.has(role) && Boolean(getSpeakableLabel(node))
+}
+
+export function isRedundantTextNode(node: AxTreeNode, parentLabel?: string): boolean {
+  const role = node.role?.toLowerCase()
+  if (role == null || !REDUNDANT_TEXT_ROLES.has(role)) return false
+  const label = getSpeakableLabel(node)
+  return Boolean(label && parentLabel && label === parentLabel)
 }
 
 export function headingLevel(level: number | undefined): 1 | 2 | 3 | 4 | 5 | 6 {
@@ -93,6 +122,10 @@ export function getRoleNotes(node: AxTreeNode): string[] {
     notes.push(`description: ${node.description}`)
   }
 
+  if (attrs?.focusable === 'true') {
+    notes.push('focusable')
+  }
+
   return notes
 }
 
@@ -103,7 +136,7 @@ export function formatNotes(stateNotes: string[], roleNotes: string[]): string {
 
 export function findAxTreeNode(roots: AxTreeNode[], nodeId: string): AxTreeNode | null {
   for (const root of roots) {
-    if (root.nodeId === nodeId) return root
+    if (getAxTreeFocusId(root) === nodeId || root.nodeId === nodeId) return root
     const found = findAxTreeNode(root.children, nodeId)
     if (found) return found
   }

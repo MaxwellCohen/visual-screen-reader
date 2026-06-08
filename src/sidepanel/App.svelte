@@ -19,7 +19,16 @@
   let roots = $state<AxTreeNode[] | null>(null)
   let nodeCount = $state(0)
   let focusedNodeId = $state<string | null>(null)
+  let source = $state<'cdp' | 'dom' | null>(null)
+  let cdpError = $state<string | null>(null)
   let view: 'tree' | 'raw' = $state('tree')
+  let copyFeedback = $state<string | null>(null)
+  let readerView: { getHtml: () => string } | undefined = $state()
+  let copyFeedbackTimeout: ReturnType<typeof setTimeout> | undefined
+
+  const sourceLabel = $derived(
+    source === 'cdp' ? 'browser AX tree (CDP)' : source === 'dom' ? 'DOM fallback' : '',
+  )
 
   const focusedNode = $derived(
     roots && focusedNodeId ? findAxTreeNode(roots, focusedNodeId) : null,
@@ -28,6 +37,52 @@
     focusedNode ? getSpeakableLabel(focusedNode) ?? focusedNode.role ?? 'Element' : null,
   )
 
+  function showCopyFeedback(message: string): void {
+    copyFeedback = message
+    if (copyFeedbackTimeout) clearTimeout(copyFeedbackTimeout)
+    copyFeedbackTimeout = setTimeout(() => {
+      copyFeedback = null
+    }, 2000)
+  }
+
+  async function copyText(text: string): Promise<void> {
+    await navigator.clipboard.writeText(text)
+    showCopyFeedback('Copied!')
+  }
+
+  async function copyHtml(html: string): Promise<void> {
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([html], { type: 'text/plain' }),
+        }),
+      ])
+    } catch {
+      await navigator.clipboard.writeText(html)
+    }
+    showCopyFeedback('Copied!')
+  }
+
+  async function copyRawJson(): Promise<void> {
+    if (!roots) return
+    try {
+      await copyText(JSON.stringify(roots, null, 2))
+    } catch (err) {
+      showCopyFeedback(err instanceof Error ? err.message : 'Copy failed')
+    }
+  }
+
+  async function copyScreenReaderHtml(): Promise<void> {
+    const html = readerView?.getHtml()
+    if (!html) return
+    try {
+      await copyHtml(html)
+    } catch (err) {
+      showCopyFeedback(err instanceof Error ? err.message : 'Copy failed')
+    }
+  }
+
   function applyAxTreeResult(response: AxTreePushMessage): void {
     tabId = response.tabId
     tabTitle = response.tabTitle
@@ -35,6 +90,8 @@
     roots = response.roots
     nodeCount = response.nodeCount
     focusedNodeId = response.focusedNodeId
+    source = response.source
+    cdpError = response.cdpError ?? null
     error = null
     live = true
   }
@@ -113,6 +170,7 @@
     chrome.runtime.onMessage.addListener(onMessage)
 
     return () => {
+      if (copyFeedbackTimeout) clearTimeout(copyFeedbackTimeout)
       chrome.runtime.onMessage.removeListener(onMessage)
       if (windowId != null) {
         void chrome.runtime.sendMessage({ type: 'SIDE_PANEL_CLOSE', windowId })
@@ -124,8 +182,8 @@
 <main>
   <h1>Visual Screen Reader</h1>
   <p class="hint">
-    Builds an accessibility-style tree from the page DOM (roles, names, ARIA). Updates
-    automatically when the DOM, page, or active tab changes.
+    DOM events drive live updates (mutations, focus, navigation). The screen reader view
+    shows the browser's internal accessibility tree via CDP, linked to DOM elements for focus.
   </p>
 
   <div class="actions">
@@ -141,27 +199,51 @@
     <p class="error" role="alert">{error}</p>
   {/if}
 
+  {#if cdpError}
+    <p class="warn" role="status">
+      CDP unavailable — showing DOM fallback. {cdpError}
+    </p>
+  {/if}
+
   {#if roots}
     <section class="results">
       <h2>{tabTitle || 'Active tab'}</h2>
       <p class="url">{url}</p>
-      <p class="stats">{nodeCount} nodes (DOM-derived)</p>
+      <p class="stats">{nodeCount} nodes{#if sourceLabel} ({sourceLabel}){/if}</p>
 
       <div class="tabs">
         <button
           type="button"
           class:active={view === 'tree'}
-          onclick={() => (view = 'tree')}
+          onclick={() => {
+            view = 'tree'
+            copyFeedback = null
+          }}
         >
           Screen reader view
         </button>
         <button
           type="button"
           class:active={view === 'raw'}
-          onclick={() => (view = 'raw')}
+          onclick={() => {
+            view = 'raw'
+            copyFeedback = null
+          }}
         >
           Raw JSON
         </button>
+      </div>
+
+      <div class="view-toolbar">
+        {#if view === 'tree'}
+          <button type="button" class="copy-btn" onclick={() => void copyScreenReaderHtml()}>
+            {copyFeedback ?? 'Copy HTML'}
+          </button>
+        {:else}
+          <button type="button" class="copy-btn" onclick={() => void copyRawJson()}>
+            {copyFeedback ?? 'Copy JSON'}
+          </button>
+        {/if}
       </div>
 
       {#if view === 'tree'}
@@ -174,7 +256,7 @@
             <span class="focus-name">{focusedLabel}</span>
           </p>
         {/if}
-        <AxTreeReaderView {roots} {focusedNodeId} />
+        <AxTreeReaderView bind:this={readerView} {roots} {focusedNodeId} />
       {:else}
         <pre class="tree-output">{JSON.stringify(roots, null, 2)}</pre>
       {/if}
@@ -231,6 +313,16 @@
     margin-top: 1rem;
   }
 
+  .warn {
+    color: #8a5a00;
+    background: #fff8e6;
+    border: 1px solid #e6c200;
+    border-radius: 4px;
+    font-size: 0.8125rem;
+    padding: 0.5rem 0.65rem;
+    margin-top: 1rem;
+  }
+
   .results {
     margin-top: 1.5rem;
   }
@@ -282,7 +374,27 @@
   .tabs {
     display: flex;
     gap: 0.5rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .view-toolbar {
+    display: flex;
+    justify-content: flex-end;
     margin-bottom: 0.5rem;
+  }
+
+  .copy-btn {
+    padding: 0.25rem 0.65rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    border: 1px solid color-mix(in srgb, var(--text) 30%, transparent);
+    background: color-mix(in srgb, var(--bg) 88%, var(--text-h));
+    border-radius: 4px;
+    color: var(--text-h);
+  }
+
+  .copy-btn:hover {
+    background: color-mix(in srgb, var(--bg) 75%, var(--text-h));
   }
 
   .tabs button {

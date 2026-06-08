@@ -1,15 +1,16 @@
 # Visual Screen Reader
 
-Chrome extension (Manifest V3) that builds a **DOM-derived accessibility tree** for the active tab and shows it in a side panel — similar to what a screen reader would encounter (roles, names, landmarks, focus).
+Chrome extension (Manifest V3) that shows the **browser’s internal accessibility tree** (via Chrome DevTools Protocol) in a side panel — linked to the page DOM for focus and live updates.
 
 Built with **Svelte 5**, **TypeScript**, and **Vite**, using [@crxjs/vite-plugin](https://crxjs.dev/vite-plugin) for HMR and extension builds.
 
 ## Features
 
-- **Accessibility tree from the DOM** — infers roles (implicit HTML + `role` / ARIA), accessible names, descriptions, states, and heading levels
+- **Browser AX tree via CDP** — captures the real accessibility tree from Chrome (`Accessibility.getFullAXTree`), not a DOM approximation
+- **DOM-linked focus** — content script stamps stable DOM paths on elements; CDP nodes are linked via `backendDOMNodeId` so focus tracking matches the page
 - **Screen reader view** — readable, speech-oriented rendering of the tree (landmarks, headings, links, etc.)
 - **Raw JSON** — full tree payload for debugging
-- **Live updates** — tree refreshes when the DOM changes, focus moves, the active tab switches, or the page navigates (including `pushState` / `replaceState`)
+- **Live updates** — DOM observers and focus listeners trigger CDP re-capture when the page changes, focus moves, the active tab switches, or the page navigates (including `pushState` / `replaceState`)
 - **Focus tracking** — highlights the focused element and scrolls it into view in the tree
 
 ## Usage
@@ -28,15 +29,20 @@ Built with **Svelte 5**, **TypeScript**, and **Vite**, using [@crxjs/vite-plugin
 │  (Svelte)   │                   │ (background)     │                          │ (page DOM)      │
 └─────────────┘                   └──────────────────┘                          └─────────────────┘
                                          │                                                │
+                                         │  chrome.debugger (CDP)                         │
+                                         │  Accessibility.getFullAXTree                   │
+                                         │  DOM.getFlattenedDocument (link to DOM)        │
+                                         │                                                │
                                          │  debounced push on tab/DOM/focus changes       │
-                                         │  buildDomAxTree() + MutationObserver           │
+                                         │  MutationObserver + focus listeners            │
+                                         │  stamp data-vsr-node-id on elements            │
                                          └────────────────────────────────────────────────┘
 ```
 
-1. The **content script** walks the page DOM, assigns stable node IDs, and builds an `AxTreeNode` tree.
-2. A **MutationObserver** and focus listeners push updates to the background when the page changes.
-3. The **service worker** routes requests from the side panel, captures the active tab’s tree, and pushes live updates while the panel is open.
-4. The **side panel** renders the tree (screen-reader-style or JSON) and tracks focus.
+1. The **content script** watches the DOM (mutations, focus, navigation) and stamps stable `data-vsr-node-id` paths on elements.
+2. On each update trigger, the **service worker** attaches the debugger, fetches the CDP accessibility tree, and links nodes to DOM paths via `backendDOMNodeId`.
+3. The **side panel** renders the CDP tree (screen-reader-style or JSON) and highlights focus using the linked DOM node ids.
+4. If CDP capture fails (e.g. another debugger is attached), the extension falls back to a DOM-derived tree.
 
 ## Project layout
 
@@ -44,8 +50,9 @@ Built with **Svelte 5**, **TypeScript**, and **Vite**, using [@crxjs/vite-plugin
 |------|------|
 | `manifest.config.ts` | Extension manifest (side panel, content scripts, permissions) |
 | `src/sidepanel/` | Chrome side panel UI (Svelte) |
-| `src/content/` | Content script — DOM tree builder and live observers |
-| `src/background/` | MV3 service worker — tab capture and message routing |
+| `src/content/` | Content script — DOM observers, node-id stamping, focus tracking |
+| `src/background/` | MV3 service worker — CDP capture, tab routing, message handling |
+| `src/background/cdp-ax-tree.ts` | CDP debugger attach, AX tree fetch, DOM linking |
 | `src/shared/` | Shared types (`AxTreeNode`, message contracts) |
 | `src/lib/` | Tree rendering and speech-oriented presentation |
 | `public/` | Static assets referenced from the manifest |
@@ -80,7 +87,7 @@ pnpm check
 
 ## Limitations
 
-- Does not use Chrome DevTools Protocol; the tree is **approximated from the DOM**, not the browser’s internal AX tree.
+- Attaching the debugger shows Chrome’s “being controlled by automated test software” banner and conflicts with DevTools on the same tab.
 - Cannot run on restricted URLs (`chrome://`, `chrome-extension://`, etc.).
 - Content script runs in the top frame only (`all_frames: false`).
 - After installing or updating, refresh open tabs so the content script is injected.
