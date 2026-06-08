@@ -29,15 +29,5 @@ body,
 main {
   box-sizing: border-box;
   min-height: 100%;
-  padding: 1rem 1.25rem;
-}
-
-h1 {
-  margin: 0 0 0.5rem;
-  font-size: 1.125rem;
-  color: var(--text-h);
-}
-
-p {
-  margin: 0 0 1rem;
+  padding: 0.5rem 0.65rem;
 }

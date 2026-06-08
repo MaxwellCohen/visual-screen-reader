@@ -180,61 +180,64 @@
 </script>
 
 <main>
-  <h1>Visual Screen Reader</h1>
-  <p class="hint">
-    DOM events drive live updates (mutations, focus, navigation). The screen reader view
-    shows the browser's internal accessibility tree via CDP, linked to DOM elements for focus.
-  </p>
-
-  <div class="actions">
-    <button type="button" onclick={() => captureTree()} disabled={loading}>
-      {loading ? 'Capturing…' : 'Refresh tree'}
-    </button>
-    {#if live}
-      <span class="live-badge" title="Listening for DOM, navigation, and tab changes">Live</span>
-    {/if}
-  </div>
-
-  {#if error}
-    <p class="error" role="alert">{error}</p>
-  {/if}
-
-  {#if cdpError}
-    <p class="warn" role="status">
-      CDP unavailable — showing DOM fallback. {cdpError}
-    </p>
-  {/if}
-
-  {#if roots}
-    <section class="results">
-      <h2>{tabTitle || 'Active tab'}</h2>
-      <p class="url">{url}</p>
-      <p class="stats">{nodeCount} nodes{#if sourceLabel} ({sourceLabel}){/if}</p>
-
-      <div class="tabs">
-        <button
-          type="button"
-          class:active={view === 'tree'}
-          onclick={() => {
-            view = 'tree'
-            copyFeedback = null
-          }}
-        >
-          Screen reader view
-        </button>
-        <button
-          type="button"
-          class:active={view === 'raw'}
-          onclick={() => {
-            view = 'raw'
-            copyFeedback = null
-          }}
-        >
-          Raw JSON
+  <header class="panel-header">
+    <div class="header-row">
+      <h1 title="DOM events drive live updates; screen reader view uses the browser AX tree via CDP">
+        Visual Screen Reader
+      </h1>
+      <div class="header-actions">
+        {#if live}
+          <span class="live-badge" title="Listening for DOM, navigation, and tab changes">Live</span>
+        {/if}
+        <button type="button" class="refresh-btn" onclick={() => captureTree()} disabled={loading}>
+          {loading ? '…' : 'Refresh'}
         </button>
       </div>
+    </div>
 
-      <div class="view-toolbar">
+    {#if error}
+      <p class="error" role="alert">{error}</p>
+    {/if}
+
+    {#if cdpError}
+      <p class="warn" role="status">
+        CDP unavailable — DOM fallback. {cdpError}
+      </p>
+    {/if}
+
+    {#if roots}
+      <div class="tab-meta">
+        <span class="tab-title" title={tabTitle}>{tabTitle || 'Active tab'}</span>
+        <span class="meta-sep" aria-hidden="true">·</span>
+        <span class="stats">{nodeCount} nodes{#if sourceLabel} ({sourceLabel}){/if}</span>
+      </div>
+      {#if url}
+        <p class="url" title={url}>{url}</p>
+      {/if}
+
+      <div class="view-controls">
+        <div class="tabs">
+          <button
+            type="button"
+            class:active={view === 'tree'}
+            onclick={() => {
+              view = 'tree'
+              copyFeedback = null
+            }}
+          >
+            Reader
+          </button>
+          <button
+            type="button"
+            class:active={view === 'raw'}
+            onclick={() => {
+              view = 'raw'
+              copyFeedback = null
+            }}
+          >
+            JSON
+          </button>
+        </div>
         {#if view === 'tree'}
           <button type="button" class="copy-btn" onclick={() => void copyScreenReaderHtml()}>
             {copyFeedback ?? 'Copy HTML'}
@@ -245,6 +248,11 @@
           </button>
         {/if}
       </div>
+    {/if}
+  </header>
+
+  {#if roots}
+    <section class="results">
 
       {#if view === 'tree'}
         {#if focusedLabel}
@@ -266,41 +274,69 @@
 
 <style>
   main {
-    padding: 1rem;
     font-family: system-ui, sans-serif;
     max-width: 100%;
   }
 
-  h1 {
-    font-size: 1.25rem;
-    margin: 0 0 0.5rem;
+  .panel-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg);
+    border-bottom: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+    padding-bottom: 0.4rem;
+    margin-bottom: 0.5rem;
   }
 
-  .hint {
-    color: #555;
-    font-size: 0.875rem;
-    margin: 0 0 1rem;
-  }
-
-  .actions {
+  .header-row {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    justify-content: space-between;
+    gap: 0.5rem;
+    min-height: 1.75rem;
+  }
+
+  h1 {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text-h);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-shrink: 0;
   }
 
   .live-badge {
-    font-size: 0.75rem;
+    font-size: 0.625rem;
     font-weight: 600;
     color: #0a7a2f;
     background: #e6f6ec;
     border: 1px solid #9ed4b0;
     border-radius: 999px;
-    padding: 0.15rem 0.5rem;
+    padding: 0.1rem 0.4rem;
+    line-height: 1.3;
   }
 
-  button[type='button']:not(.tabs button) {
-    padding: 0.5rem 1rem;
+  .refresh-btn {
+    padding: 0.15rem 0.5rem;
+    font-size: 0.6875rem;
     cursor: pointer;
+    border: 1px solid color-mix(in srgb, var(--text) 30%, transparent);
+    background: color-mix(in srgb, var(--bg) 88%, var(--text-h));
+    border-radius: 4px;
+    color: var(--text-h);
+  }
+
+  .refresh-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--bg) 75%, var(--text-h));
   }
 
   button[type='button']:disabled {
@@ -310,46 +346,77 @@
 
   .error {
     color: #b00020;
-    margin-top: 1rem;
+    font-size: 0.75rem;
+    margin: 0.25rem 0 0;
   }
 
   .warn {
     color: #8a5a00;
     background: #fff8e6;
     border: 1px solid #e6c200;
-    border-radius: 4px;
-    font-size: 0.8125rem;
-    padding: 0.5rem 0.65rem;
-    margin-top: 1rem;
+    border-radius: 3px;
+    font-size: 0.6875rem;
+    padding: 0.25rem 0.4rem;
+    margin: 0.25rem 0 0;
   }
 
-  .results {
-    margin-top: 1.5rem;
+  .tab-meta {
+    display: flex;
+    align-items: baseline;
+    gap: 0.3rem;
+    margin-top: 0.35rem;
+    font-size: 0.6875rem;
+    line-height: 1.3;
+    min-width: 0;
   }
 
-  .results h2 {
-    font-size: 1rem;
-    margin: 0 0 0.25rem;
+  .tab-title {
+    font-weight: 600;
     color: var(--text-h);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1 1 auto;
   }
 
-  .url {
-    font-size: 0.75rem;
-    color: #666;
-    word-break: break-all;
-    margin: 0 0 0.5rem;
+  .meta-sep {
+    color: var(--text);
+    flex-shrink: 0;
   }
 
   .stats {
-    font-size: 0.875rem;
-    margin: 0 0 0.75rem;
+    color: var(--text);
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .url {
+    font-size: 0.625rem;
+    color: var(--text);
+    margin: 0.15rem 0 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .view-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.35rem;
+    margin-top: 0.35rem;
+  }
+
+  .results {
+    margin-top: 0;
   }
 
   .focus-indicator {
-    font-size: 0.8125rem;
-    margin: 0 0 0.75rem;
-    padding: 0.5rem 0.65rem;
-    border-radius: 4px;
+    font-size: 0.75rem;
+    margin: 0 0 0.4rem;
+    padding: 0.3rem 0.45rem;
+    border-radius: 3px;
     background: color-mix(in srgb, #2563eb 12%, var(--bg));
     border: 1px solid color-mix(in srgb, #2563eb 35%, transparent);
     color: var(--text-h);
@@ -357,14 +424,14 @@
 
   .focus-label {
     font-weight: 600;
-    margin-right: 0.35rem;
+    margin-right: 0.3rem;
   }
 
   .focus-role {
-    font-size: 0.75rem;
+    font-size: 0.6875rem;
     text-transform: capitalize;
     color: var(--text);
-    margin-right: 0.35rem;
+    margin-right: 0.3rem;
   }
 
   .focus-name {
@@ -373,24 +440,18 @@
 
   .tabs {
     display: flex;
-    gap: 0.5rem;
-    margin-bottom: 0.35rem;
-  }
-
-  .view-toolbar {
-    display: flex;
-    justify-content: flex-end;
-    margin-bottom: 0.5rem;
+    gap: 0.25rem;
   }
 
   .copy-btn {
-    padding: 0.25rem 0.65rem;
-    font-size: 0.75rem;
+    padding: 0.15rem 0.45rem;
+    font-size: 0.625rem;
     cursor: pointer;
     border: 1px solid color-mix(in srgb, var(--text) 30%, transparent);
     background: color-mix(in srgb, var(--bg) 88%, var(--text-h));
-    border-radius: 4px;
+    border-radius: 3px;
     color: var(--text-h);
+    flex-shrink: 0;
   }
 
   .copy-btn:hover {
@@ -398,18 +459,19 @@
   }
 
   .tabs button {
-    padding: 0.25rem 0.75rem;
-    font-size: 0.875rem;
+    padding: 0.15rem 0.45rem;
+    font-size: 0.6875rem;
     cursor: pointer;
-    border: 1px solid #ccc;
-    background: #f5f5f5;
-    border-radius: 4px;
+    border: 1px solid color-mix(in srgb, var(--text) 25%, transparent);
+    background: color-mix(in srgb, var(--bg) 92%, var(--text-h));
+    border-radius: 3px;
+    color: var(--text-h);
   }
 
   .tabs button.active {
-    background: #333;
-    color: #fff;
-    border-color: #333;
+    background: color-mix(in srgb, var(--text-h) 88%, var(--bg));
+    color: var(--bg);
+    border-color: transparent;
   }
 
   .tree-output {
