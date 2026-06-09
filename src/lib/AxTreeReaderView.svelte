@@ -77,7 +77,9 @@
       return
     }
 
-    const el = container.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(nodeId)}"]`)
+    const focusId = focusedNodeId
+    if (!focusId) return
+    const el = container.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(focusId)}"]`)
     el?.scrollIntoView({ block: 'nearest', behavior: 'instant' })
   })
 </script>

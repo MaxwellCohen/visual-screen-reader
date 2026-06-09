@@ -42,6 +42,19 @@ function onRouteChange(): void {
   scheduleDomAxTreeUpdate()
 }
 
+function onFormFieldChange(event: Event): void {
+  const target = event.target
+  if (!(target instanceof Element)) return
+  if (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  ) {
+    scheduleDomAxTreeUpdate()
+  }
+}
+
 function patchHistoryMethod(method: 'pushState' | 'replaceState'): void {
   const original = history[method].bind(history)
   history[method] = (...args: Parameters<History['pushState']>) => {
@@ -129,6 +142,8 @@ export function startAxTreeObserver(): void {
   navigation?.addEventListener('navigate', onRouteChange)
 
   document.addEventListener('focusin', onFocusIn, { capture: true, passive: true })
+  document.addEventListener('input', onFormFieldChange, { capture: true, passive: true })
+  document.addEventListener('change', onFormFieldChange, { capture: true, passive: true })
   window.addEventListener('blur', onWindowBlur)
   window.addEventListener('focus', onWindowFocus)
 }
