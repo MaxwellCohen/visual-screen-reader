@@ -1,5 +1,5 @@
 import type { AxTreeNode } from '../shared/ax-tree'
-import { getAxTreeFocusId } from '../shared/ax-tree'
+import { getAxTreeFocusId } from '../shared/dom-link'
 import {
   formatNotes,
   getRoleNotes,
@@ -133,7 +133,8 @@ export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree
         })
       }
       else recordFocus(focusId, Math.max(0, lines.length - 1))
-      for (const child of node.children) walk(child, label, depth + 1)
+      const childDepth = label ? depth + 1 : depth
+      for (const child of node.children) walk(child, label, childDepth)
       return
     }
 
@@ -218,7 +219,7 @@ export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree
         role,
         landmarkRole: role,
       })
-      for (const child of node.children) walk(child, label, depth + 1)
+      for (const child of node.children) walk(child, label, 0)
       return
     }
 

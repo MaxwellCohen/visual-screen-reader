@@ -1,8 +1,8 @@
-import type { AxNode } from '../shared/ax-tree'
-import { buildAxTree, type AxTreeNode } from '../shared/ax-tree'
+import type { AxTreeNode } from '../shared/ax-tree'
+import { readDomNodeIdAttribute } from '../shared/dom-link'
+import { buildAxTree, type AxNode } from './cdp-ax-adapter'
 
 const CDP_PROTOCOL = '1.3'
-const DOM_NODE_ID_ATTR = 'data-vsr-node-id'
 
 const attachedTabs = new Set<number>()
 let accessibilityEnabled = false
@@ -91,14 +91,9 @@ function collectDomInfoFromNode(node: CdpDomNode, info: BackendDomInfo): void {
     info.tagNames.set(node.backendNodeId, node.localName.toLowerCase())
   }
 
-  if (node.attributes) {
-    const attrs = node.attributes
-    for (let i = 0; i < attrs.length - 1; i += 2) {
-      if (attrs[i] === DOM_NODE_ID_ATTR && attrs[i + 1]) {
-        info.domNodeIds.set(node.backendNodeId, attrs[i + 1])
-        break
-      }
-    }
+  const domNodeId = readDomNodeIdAttribute(node.attributes)
+  if (domNodeId) {
+    info.domNodeIds.set(node.backendNodeId, domNodeId)
   }
 }
 

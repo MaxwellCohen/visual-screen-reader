@@ -1,6 +1,10 @@
 import type { AxTreeNode } from '../shared/ax-tree'
-
-export const DOM_NODE_ID_ATTR = 'data-vsr-node-id'
+import {
+  childDomNodeId,
+  DOM_NODE_ID_ATTR,
+  DOM_ROOT_NODE_ID,
+  domNodeIdFromPath,
+} from '../shared/dom-link'
 
 const IGNORED_TAGS = new Set([
   'script',
@@ -253,7 +257,7 @@ function childIndexAmongSiblings(el: Element): number {
 }
 
 function nodeIdPathFromBody(el: Element): string | null {
-  if (el === document.body) return 'body'
+  if (el === document.body) return DOM_ROOT_NODE_ID
 
   const path: number[] = []
   let current: Element | null = el
@@ -266,7 +270,7 @@ function nodeIdPathFromBody(el: Element): string | null {
   }
 
   if (current !== document.body) return null
-  return `body.${path.join('.')}`
+  return domNodeIdFromPath(path)
 }
 
 /** Whether an element would appear in the DOM-derived AX tree (without building it). */
@@ -288,7 +292,7 @@ function elementIncludedInAxTree(el: Element): boolean {
 export function getAxTreeNodeIdForElement(el: Element): string | null {
   let current: Element | null = el
   while (current && current !== document.documentElement) {
-    if (current === document.body) return 'body'
+    if (current === document.body) return DOM_ROOT_NODE_ID
     if (elementIncludedInAxTree(current)) return nodeIdPathFromBody(current)
     current = current.parentElement
   }
@@ -322,7 +326,7 @@ function stampElementTree(el: Element, nodeId: string): void {
   let childIndex = 0
 
   for (const child of el.children) {
-    const childNodeId = `${nodeId}.${childIndex}`
+    const childNodeId = childDomNodeId(nodeId, childIndex)
     childIndex += 1
     stampElementTree(child, childNodeId)
     if (child.hasAttribute(DOM_NODE_ID_ATTR)) hasIncludedChild = true
@@ -338,14 +342,14 @@ function stampElementTree(el: Element, nodeId: string): void {
 
 /** Stamp stable DOM paths on elements so CDP AX nodes can be linked back to the page. */
 export function stampDomNodeIds(): void {
-  if (document.body) stampElementTree(document.body, 'body')
+  if (document.body) stampElementTree(document.body, DOM_ROOT_NODE_ID)
 }
 
 export function buildDomAxTree(): AxTreeNode[] {
   const roots: AxTreeNode[] = []
 
   if (document.body) {
-    const bodyTree = walkElement(document.body, 'body')
+    const bodyTree = walkElement(document.body, DOM_ROOT_NODE_ID)
     if (bodyTree) roots.push(bodyTree)
   }
 

@@ -1,5 +1,5 @@
 import type { AxTreeNode } from '../shared/ax-tree'
-import { getAxTreeFocusId } from '../shared/ax-tree'
+import { getAxTreeFocusId } from '../shared/dom-link'
 
 const PASSTHROUGH_ROLES = new Set(['generic', 'none', 'presentation'])
 

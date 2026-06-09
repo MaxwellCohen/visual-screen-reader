@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { AxTreeNode } from '../shared/ax-tree'
-  import AxTreeNodeView from './AxTreeNodeView.svelte'
   import AxTreeReaderLine from './AxTreeReaderLine.svelte'
   import {
     findVisibleLineRange,
@@ -78,7 +77,7 @@
     }
 
     const el = container.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(nodeId)}"]`)
-    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    el?.scrollIntoView({ block: 'nearest', behavior: 'instant' })
   })
 </script>
 
@@ -88,22 +87,16 @@
   onscroll={onScroll}
   use:observeViewport
 >
-  {#if useVirtual}
-    <div class="virtual-track" style:height="{flattened.totalHeight}px">
-      <div
-        class="virtual-window"
-        style:transform="translateY({flattened.lineOffsets[visibleRange.start]}px)"
-      >
-        {#each visibleLines as line, index (`${visibleRange.start + index}`)}
-          <AxTreeReaderLine {line} focused={focusedNodeId === line.focusId} />
-        {/each}
-      </div>
+  <div class:virtual-track={useVirtual} style:height={useVirtual ? `${flattened.totalHeight}px` : undefined}>
+    <div
+      class:virtual-window={useVirtual}
+      style:transform={useVirtual ? `translateY(${flattened.lineOffsets[visibleRange.start]}px)` : undefined}
+    >
+      {#each visibleLines as line, index (`${visibleRange.start + index}`)}
+        <AxTreeReaderLine {line} focused={focusedNodeId === line.focusId} />
+      {/each}
     </div>
-  {:else}
-    {#each roots as root (root.nodeId)}
-      <AxTreeNodeView node={root} {focusedNodeId} />
-    {/each}
-  {/if}
+  </div>
 </div>
 
 <style>
