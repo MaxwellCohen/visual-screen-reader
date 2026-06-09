@@ -7,6 +7,7 @@
     getSpeakableLabel,
     getStateNotes,
     headingLevel,
+    genericWrapperTag,
     isGenericContainer,
     isLandmarkRole,
     isPassthroughRole,
@@ -56,12 +57,34 @@
     {@render childNodes()}
   </span>
 {:else if isGenericContainer(node)}
-  <div class="sr-div" data-node-id={focusId} class:sr-focused={focused}>
+  {@const genericTag = genericWrapperTag(node)}
+  <svelte:element
+    this={genericTag}
+    class:sr-div={genericTag === 'div'}
+    class:sr-span={genericTag === 'span'}
+    data-node-id={focusId}
+    class:sr-focused={focused}
+  >
     {#if label}
-      <p class="sr-text">{label}{@render notes()}</p>
+      <svelte:element this={genericTag === 'span' ? 'span' : 'p'} class="sr-text">
+        {label}{@render notes()}
+      </svelte:element>
     {/if}
     {@render childNodes()}
-  </div>
+  </svelte:element>
+{:else if role === 'generic' && label}
+  {@const genericTag = genericWrapperTag(node)}
+  <svelte:element
+    this={genericTag}
+    class:sr-div={genericTag === 'div'}
+    class:sr-span={genericTag === 'span'}
+    data-node-id={focusId}
+    class:sr-focused={focused}
+  >
+    <svelte:element this={genericTag === 'span' ? 'span' : 'p'} class="sr-text">
+      {label}{@render notes()}
+    </svelte:element>
+  </svelte:element>
 {:else if isPassthroughRole(role)}
   {#if label}
     <p class="sr-text" data-node-id={focusId} class:sr-focused={focused}>
@@ -98,15 +121,15 @@
     {@render notes()}
   </p>
 {:else if role === 'link'}
-  <span class="sr-link" data-node-id={focusId} class:sr-focused={focused}>
+  <div class="sr-link" data-node-id={focusId} class:sr-focused={focused}>
     {#if dedup}
-      {label}{@render notes()}
+      <span class="sr-link-label">{label}</span>{@render notes()}
     {:else}
-      {#if label}{label}{/if}
+      {#if label}<span class="sr-link-label">{label}</span>{/if}
       {@render childNodes()}
       {@render notes()}
     {/if}
-  </span>
+  </div>
 {:else if role === 'button'}
   <span class="sr-button" data-node-id={focusId} class:sr-focused={focused}>
     {#if dedup}

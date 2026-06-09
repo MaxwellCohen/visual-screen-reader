@@ -9,10 +9,16 @@ let accessibilityEnabled = false
 
 interface CdpDomNode {
   backendNodeId?: number
+  localName?: string
   attributes?: string[]
   children?: CdpDomNode[]
   contentDocument?: CdpDomNode
   shadowRoots?: CdpDomNode[]
+}
+
+interface BackendDomInfo {
+  domNodeIds: Map<number, string>
+  tagNames: Map<number, string>
 }
 
 interface GetFullAxTreeResult {
@@ -78,47 +84,57 @@ export async function detachAllDebuggers(): Promise<void> {
   await Promise.all([...attachedTabs].map((tabId) => detachDebugger(tabId)))
 }
 
-function collectDomLinkFromNode(node: CdpDomNode, map: Map<number, string>): void {
-  if (node.backendNodeId != null && node.attributes) {
+function collectDomInfoFromNode(node: CdpDomNode, info: BackendDomInfo): void {
+  if (node.backendNodeId == null) return
+
+  if (node.localName) {
+    info.tagNames.set(node.backendNodeId, node.localName.toLowerCase())
+  }
+
+  if (node.attributes) {
     const attrs = node.attributes
     for (let i = 0; i < attrs.length - 1; i += 2) {
       if (attrs[i] === DOM_NODE_ID_ATTR && attrs[i + 1]) {
-        map.set(node.backendNodeId, attrs[i + 1])
+        info.domNodeIds.set(node.backendNodeId, attrs[i + 1])
         break
       }
     }
   }
 }
 
-function walkDomTree(node: CdpDomNode | undefined, map: Map<number, string>): void {
+function walkDomTree(node: CdpDomNode | undefined, info: BackendDomInfo): void {
   if (!node) return
 
-  collectDomLinkFromNode(node, map)
+  collectDomInfoFromNode(node, info)
 
   for (const child of node.children ?? []) {
-    walkDomTree(child, map)
+    walkDomTree(child, info)
   }
   for (const shadow of node.shadowRoots ?? []) {
-    walkDomTree(shadow, map)
+    walkDomTree(shadow, info)
   }
-  walkDomTree(node.contentDocument, map)
+  walkDomTree(node.contentDocument, info)
 }
 
-async function fetchBackendDomLinks(tabId: number): Promise<Map<number, string>> {
+function emptyBackendDomInfo(): BackendDomInfo {
+  return { domNodeIds: new Map(), tagNames: new Map() }
+}
+
+async function fetchBackendDomInfo(tabId: number): Promise<BackendDomInfo> {
   const doc = await sendDebuggerCommand<GetDocumentResult>(tabId, 'DOM.getDocument', {
     depth: -1,
     pierce: true,
   })
-  const map = new Map<number, string>()
-  walkDomTree(doc.root, map)
-  return map
+  const info = emptyBackendDomInfo()
+  walkDomTree(doc.root, info)
+  return info
 }
 
-async function fetchBackendDomLinksViaDescribe(
+async function fetchBackendDomInfoViaDescribe(
   tabId: number,
   axNodes: AxNode[],
-): Promise<Map<number, string>> {
-  const map = new Map<number, string>()
+): Promise<BackendDomInfo> {
+  const info = emptyBackendDomInfo()
   const backendIds = [
     ...new Set(
       axNodes.map((node) => node.backendDOMNodeId).filter((id): id is number => id != null),
@@ -132,14 +148,14 @@ async function fetchBackendDomLinksViaDescribe(
           backendNodeId,
           depth: 0,
         })
-        if (result.node) collectDomLinkFromNode(result.node, map)
+        if (result.node) collectDomInfoFromNode(result.node, info)
       } catch {
         // Some AX nodes reference backend ids that cannot be described.
       }
     }),
   )
 
-  return map
+  return info
 }
 
 async function fetchCdpAxNodes(tabId: number): Promise<AxNode[]> {
@@ -158,16 +174,21 @@ export async function fetchLinkedCdpAxTree(tabId: number): Promise<AxTreeNode[]>
   const axNodes = await fetchCdpAxNodes(tabId)
 
   let backendToDomNodeId = new Map<number, string>()
+  let backendToTagName = new Map<number, string>()
   try {
-    backendToDomNodeId = await fetchBackendDomLinks(tabId)
+    const domInfo = await fetchBackendDomInfo(tabId)
+    backendToDomNodeId = domInfo.domNodeIds
+    backendToTagName = domInfo.tagNames
     if (backendToDomNodeId.size === 0 && axNodes.some((node) => node.backendDOMNodeId != null)) {
-      backendToDomNodeId = await fetchBackendDomLinksViaDescribe(tabId, axNodes)
+      const described = await fetchBackendDomInfoViaDescribe(tabId, axNodes)
+      backendToDomNodeId = described.domNodeIds
+      backendToTagName = described.tagNames
     }
   } catch (linkErr) {
     console.warn('[visual-screen-reader] CDP DOM linking failed; tree will render without DOM ids', linkErr)
   }
 
-  return buildAxTree(axNodes, backendToDomNodeId)
+  return buildAxTree(axNodes, backendToDomNodeId, backendToTagName)
 }
 
 chrome.debugger.onDetach.addListener((source, reason) => {

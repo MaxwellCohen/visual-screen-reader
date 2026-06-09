@@ -1,10 +1,15 @@
 import { buildDomAxTree, getFocusedAxTreeNodeId, stampDomNodeIds } from './build-dom-ax-tree'
 import { countAxTreeNodes } from '../shared/ax-tree'
-import { startAxTreeObserver } from './observe-ax-tree'
+import { setAxTreeWatching, startAxTreeObserver } from './observe-ax-tree'
 import type { DomAxTreeResultMessage } from '../shared/messages'
 
 if (window === window.top) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === 'SET_WATCHING') {
+      setAxTreeWatching(message.watching === true)
+      return
+    }
+
     if (message?.type !== 'GET_AX_TREE') return
 
     stampDomNodeIds()

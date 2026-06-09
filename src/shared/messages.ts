@@ -23,6 +23,9 @@ export type DomFocusChangedMessage = {
 export type SidePanelOpenMessage = { type: 'SIDE_PANEL_OPEN'; windowId: number }
 export type SidePanelCloseMessage = { type: 'SIDE_PANEL_CLOSE'; windowId: number }
 
+/** Tells a content script whether the side panel is open for its tab. */
+export type SetWatchingMessage = { type: 'SET_WATCHING'; watching: boolean }
+
 export type AxTreeResultMessage = {
   type: 'AX_TREE_RESULT'
   tabId: number
@@ -51,7 +54,7 @@ export type AxTreePushMessage = AxTreeResultMessage
 
 export type BackgroundResponse = AxTreeResultMessage | AxTreeErrorMessage
 
-export type ContentRequest = GetAxTreeMessage
+export type ContentRequest = GetAxTreeMessage | SetWatchingMessage
 
 export type ContentResponse = DomAxTreeResultMessage
 

@@ -53,6 +53,52 @@ export function isGenericContainer(node: AxTreeNode): boolean {
   return role === 'generic' && node.children.length > 0
 }
 
+const INLINE_HTML_TAGS = new Set([
+  'a',
+  'abbr',
+  'acronym',
+  'b',
+  'bdi',
+  'bdo',
+  'big',
+  'br',
+  'cite',
+  'code',
+  'data',
+  'dfn',
+  'em',
+  'i',
+  'img',
+  'input',
+  'kbd',
+  'label',
+  'mark',
+  'output',
+  'q',
+  'ruby',
+  'rp',
+  'rt',
+  's',
+  'samp',
+  'small',
+  'span',
+  'strong',
+  'sub',
+  'sup',
+  'time',
+  'tt',
+  'u',
+  'var',
+  'wbr',
+])
+
+/** Block generics render as `div`, inline generics as `span` in the screen reader view. */
+export function genericWrapperTag(node: AxTreeNode): 'div' | 'span' {
+  const tag = node.tagName?.toLowerCase()
+  if (!tag) return 'div'
+  return INLINE_HTML_TAGS.has(tag) ? 'span' : 'div'
+}
+
 export function isLandmarkRole(role: string | undefined): boolean {
   return role != null && LANDMARK_ROLES.has(role)
 }

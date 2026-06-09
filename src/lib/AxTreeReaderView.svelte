@@ -1,6 +1,13 @@
 <script lang="ts">
   import type { AxTreeNode } from '../shared/ax-tree'
   import AxTreeNodeView from './AxTreeNodeView.svelte'
+  import AxTreeReaderLine from './AxTreeReaderLine.svelte'
+  import {
+    findVisibleLineRange,
+    flattenAxTreeForReader,
+    readerLinesToHtml,
+    VIRTUALIZE_LINE_THRESHOLD,
+  } from './flatten-ax-tree-reader'
 
   let {
     roots,
@@ -11,24 +18,92 @@
   } = $props()
 
   let container: HTMLDivElement | undefined = $state()
+  let scrollTop = $state(0)
+  let viewportHeight = $state(0)
+
+  const flattened = $derived(flattenAxTreeForReader(roots))
+  const useVirtual = $derived(flattened.lines.length > VIRTUALIZE_LINE_THRESHOLD)
+
+  const visibleRange = $derived.by(() => {
+    if (!useVirtual) return { start: 0, end: flattened.lines.length }
+    return findVisibleLineRange(flattened.lineOffsets, scrollTop, viewportHeight)
+  })
+
+  const visibleLines = $derived(
+    flattened.lines.slice(visibleRange.start, visibleRange.end),
+  )
 
   export function getHtml(): string {
-    return container?.innerHTML ?? ''
+    return readerLinesToHtml(flattened.lines)
+  }
+
+  function onScroll(): void {
+    if (!container) return
+    scrollTop = container.scrollTop
+  }
+
+  function observeViewport(node: HTMLDivElement): { destroy: () => void } {
+    const update = () => {
+      viewportHeight = node.clientHeight
+    }
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(node)
+    return {
+      destroy() {
+        observer.disconnect()
+      },
+    }
   }
 
   $effect(() => {
     const nodeId = focusedNodeId
     if (!nodeId || !container) return
 
+    if (useVirtual) {
+      const lineIndex = flattened.focusLineIndex.get(nodeId)
+      if (lineIndex == null) return
+
+      const top = flattened.lineOffsets[lineIndex]!
+      const bottom = flattened.lineOffsets[lineIndex + 1]!
+      const viewTop = container.scrollTop
+      const viewBottom = viewTop + viewportHeight
+
+      if (top < viewTop) {
+        container.scrollTop = top
+      } else if (bottom > viewBottom) {
+        container.scrollTop = bottom - viewportHeight
+      }
+      return
+    }
+
     const el = container.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(nodeId)}"]`)
     el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   })
 </script>
 
-<div class="ax-speech-output" bind:this={container}>
-  {#each roots as root (root.nodeId)}
-    <AxTreeNodeView node={root} {focusedNodeId} />
-  {/each}
+<div
+  class="ax-speech-output"
+  bind:this={container}
+  onscroll={onScroll}
+  use:observeViewport
+>
+  {#if useVirtual}
+    <div class="virtual-track" style:height="{flattened.totalHeight}px">
+      <div
+        class="virtual-window"
+        style:transform="translateY({flattened.lineOffsets[visibleRange.start]}px)"
+      >
+        {#each visibleLines as line, index (`${visibleRange.start + index}`)}
+          <AxTreeReaderLine {line} focused={focusedNodeId === line.focusId} />
+        {/each}
+      </div>
+    </div>
+  {:else}
+    {#each roots as root (root.nodeId)}
+      <AxTreeNodeView node={root} {focusedNodeId} />
+    {/each}
+  {/if}
 </div>
 
 <style>
@@ -43,6 +118,15 @@
     padding: 0.75rem;
     overflow: auto;
     max-height: 70vh;
+  }
+
+  .virtual-track {
+    position: relative;
+    width: 100%;
+  }
+
+  .virtual-window {
+    will-change: transform;
   }
 
   .ax-speech-output :global(.sr-note) {
@@ -67,9 +151,16 @@
   }
 
   .ax-speech-output :global(.sr-link) {
+    display: block;
+    margin: 0.15rem 0;
+    color: var(--text-h);
+  }
+
+  .ax-speech-output :global(.sr-link-label) {
     color: var(--accent);
     text-decoration: underline;
-    display: inline;
+    text-decoration-thickness: 0.08em;
+    text-underline-offset: 0.12em;
   }
 
   .ax-speech-output :global(.sr-button) {
@@ -100,13 +191,13 @@
     display: block;
   }
 
-  .ax-speech-output :global(.sr-list) {
-    margin: 0.35rem 0;
-    padding-left: 1.25rem;
+  .ax-speech-output :global(.sr-span) {
+    display: inline;
   }
 
   .ax-speech-output :global(.sr-listitem) {
     margin: 0.15rem 0;
+    color: var(--text-h);
   }
 
   .ax-speech-output :global(.sr-landmark) {
@@ -129,7 +220,6 @@
   }
 
   .ax-speech-output :global(.sr-text),
-  .ax-speech-output :global(.sr-listitem),
   .ax-speech-output :global(.sr-control),
   .ax-speech-output :global(.sr-landmark-name) {
     color: var(--text-h);

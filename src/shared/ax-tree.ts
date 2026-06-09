@@ -94,6 +94,7 @@ export function getAxTreeFocusId(node: AxTreeNode): string {
 export function buildAxTree(
   nodes: AxNode[],
   backendToDomNodeId?: Map<number, string>,
+  backendToTagName?: Map<number, string>,
 ): AxTreeNode[] {
   const byId = new Map(nodes.map((n) => [n.nodeId, n]))
   const referenced = new Set<string>()
@@ -117,6 +118,8 @@ export function buildAxTree(
     const level = levelRaw != null ? Number(levelRaw) : undefined
     const domNodeId =
       node.backendDOMNodeId != null ? backendToDomNodeId?.get(node.backendDOMNodeId) : undefined
+    const tagName =
+      node.backendDOMNodeId != null ? backendToTagName?.get(node.backendDOMNodeId) : undefined
 
     return {
       nodeId: node.nodeId,
@@ -124,6 +127,7 @@ export function buildAxTree(
       backendDOMNodeId: node.backendDOMNodeId,
       ignored: node.ignored,
       role: node.role?.value ?? node.chromeRole?.value,
+      tagName,
       name: node.name?.value,
       description: node.description?.value,
       content: node.value?.value,

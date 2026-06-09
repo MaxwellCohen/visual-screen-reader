@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import AxTreeJsonView from '../lib/AxTreeJsonView.svelte'
+  import { axTreeToJsonString } from '../lib/flatten-ax-tree-json'
   import AxTreeReaderView from '../lib/AxTreeReaderView.svelte'
   import type { AxTreeNode } from '../shared/ax-tree'
   import { findAxTreeNode, getSpeakableLabel } from '../lib/ax-tree-speech'
@@ -25,6 +27,19 @@
   let copyFeedback = $state<string | null>(null)
   let readerView: { getHtml: () => string } | undefined = $state()
   let copyFeedbackTimeout: ReturnType<typeof setTimeout> | undefined
+  let readerRoots = $state<AxTreeNode[] | null>(null)
+  let readerFocusedNodeId = $state<string | null>(null)
+
+  $effect(() => {
+    if (view !== 'tree' || !roots) return
+    readerFocusedNodeId = focusedNodeId
+  })
+
+  function syncReaderSnapshot(): void {
+    if (!roots) return
+    readerRoots = roots
+    readerFocusedNodeId = focusedNodeId
+  }
 
   const sourceLabel = $derived(
     source === 'cdp' ? 'browser AX tree (CDP)' : source === 'dom' ? 'DOM fallback' : '',
@@ -67,7 +82,7 @@
   async function copyRawJson(): Promise<void> {
     if (!roots) return
     try {
-      await copyText(JSON.stringify(roots, null, 2))
+      await copyText(axTreeToJsonString(roots))
     } catch (err) {
       showCopyFeedback(err instanceof Error ? err.message : 'Copy failed')
     }
@@ -94,6 +109,7 @@
     cdpError = response.cdpError ?? null
     error = null
     live = true
+    if (view === 'tree') syncReaderSnapshot()
   }
 
   async function captureTree(options: { silent?: boolean } = {}) {
@@ -223,6 +239,7 @@
             onclick={() => {
               view = 'tree'
               copyFeedback = null
+              syncReaderSnapshot()
             }}
           >
             Reader
@@ -253,8 +270,7 @@
 
   {#if roots}
     <section class="results">
-
-      {#if view === 'tree'}
+      <div class="view-panel" class:hidden={view !== 'tree'} aria-hidden={view !== 'tree'}>
         {#if focusedLabel}
           <p class="focus-indicator" aria-live="polite">
             <span class="focus-label">In focus:</span>
@@ -264,10 +280,19 @@
             <span class="focus-name">{focusedLabel}</span>
           </p>
         {/if}
-        <AxTreeReaderView bind:this={readerView} {roots} {focusedNodeId} />
-      {:else}
-        <pre class="tree-output">{JSON.stringify(roots, null, 2)}</pre>
-      {/if}
+        {#if readerRoots}
+          <AxTreeReaderView
+            bind:this={readerView}
+            roots={readerRoots}
+            focusedNodeId={readerFocusedNodeId}
+          />
+        {/if}
+      </div>
+      <div class="view-panel" class:hidden={view !== 'raw'} aria-hidden={view !== 'raw'}>
+        {#if view === 'raw'}
+          <AxTreeJsonView roots={roots} />
+        {/if}
+      </div>
     </section>
   {/if}
 </main>
@@ -279,9 +304,7 @@
   }
 
   .panel-header {
-    position: sticky;
-    top: 0;
-    z-index: 1;
+    flex-shrink: 0;
     background: var(--bg);
     border-bottom: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
     padding-bottom: 0.4rem;
@@ -409,7 +432,28 @@
   }
 
   .results {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
     margin-top: 0;
+  }
+
+  .view-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .view-panel.hidden {
+    display: none;
+  }
+
+  .view-panel :global(.ax-speech-output) {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
   }
 
   .focus-indicator {
@@ -474,17 +518,4 @@
     border-color: transparent;
   }
 
-  .tree-output {
-    font-size: 0.7rem;
-    line-height: 1.35;
-    color: var(--text-h);
-    background: color-mix(in srgb, var(--bg) 88%, var(--text-h));
-    border: 1px solid color-mix(in srgb, var(--text) 30%, transparent);
-    border-radius: 4px;
-    padding: 0.75rem;
-    overflow: auto;
-    max-height: 70vh;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
 </style>

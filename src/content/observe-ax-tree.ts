@@ -6,11 +6,21 @@ import {
 import type { DomAxTreeUpdatedMessage, DomFocusChangedMessage } from '../shared/messages'
 
 const DEBOUNCE_MS = 200
-const FOCUS_DEBOUNCE_MS = 100
+const FOCUS_DEBOUNCE_MS = 25
 
 let debounceTimer: ReturnType<typeof setTimeout> | undefined
+let watching = false
+
+export function setAxTreeWatching(value: boolean): void {
+  watching = value
+  if (!watching) return
+
+  pushFocusChange(getFocusedAxTreeNodeId())
+  scheduleDomAxTreeUpdate()
+}
 
 function pushDomAxTreeUpdate(): void {
+  if (!watching) return
   stampDomNodeIds()
   const focusedNodeId = getFocusedAxTreeNodeId()
   const message: DomAxTreeUpdatedMessage = {
@@ -44,6 +54,7 @@ let focusDebounceTimer: ReturnType<typeof setTimeout> | undefined
 let lastFocusedNodeId: string | null | undefined
 
 function pushFocusChange(nodeId: string | null): void {
+  if (!watching) return
   if (nodeId === lastFocusedNodeId) return
   lastFocusedNodeId = nodeId
 
@@ -120,8 +131,4 @@ export function startAxTreeObserver(): void {
   document.addEventListener('focusin', onFocusIn, { capture: true, passive: true })
   window.addEventListener('blur', onWindowBlur)
   window.addEventListener('focus', onWindowFocus)
-
-  pushFocusChange(getFocusedAxTreeNodeId())
-
-  scheduleDomAxTreeUpdate()
 }

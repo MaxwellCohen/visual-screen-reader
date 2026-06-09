@@ -9,47 +9,57 @@ import type {
   DomAxTreeUpdatedMessage,
   DomFocusChangedMessage,
 } from '../shared/messages'
-import { detachAllDebuggers, fetchLinkedCdpAxTree } from './cdp-ax-tree'
+import { detachDebugger, fetchLinkedCdpAxTree, isDebuggerAttached } from './cdp-ax-tree'
 
 const watchingWindows = new Set<number>()
 const pushDebounceTimers = new Map<number, ReturnType<typeof setTimeout>>()
+const domUpdateDebounceTimers = new Map<number, ReturnType<typeof setTimeout>>()
+const pendingDomFocusByTab = new Map<number, string | null>()
+const captureInFlight = new Set<number>()
+const pendingCaptureAfterFlight = new Map<
+  number,
+  { windowId: number; focusedNodeId?: string | null }
+>()
 const PUSH_DEBOUNCE_MS = 200
+const DOM_UPDATE_DEBOUNCE_MS = 250
 
 chrome.runtime.onInstalled.addListener(() => {
   console.debug('[visual-screen-reader] extension installed')
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
 })
 
+chrome.sidePanel.onOpened.addListener((info) => {
+  void startWatchingWindow(info.windowId)
+})
+
+chrome.sidePanel.onClosed.addListener((info) => {
+  void stopWatchingWindow(info.windowId)
+})
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'SIDE_PANEL_OPEN') {
-    watchingWindows.add(message.windowId)
+    void startWatchingWindow(message.windowId)
     return
   }
 
   if (message?.type === 'SIDE_PANEL_CLOSE') {
-    watchingWindows.delete(message.windowId)
-    if (watchingWindows.size === 0) {
-      void detachAllDebuggers()
-    }
+    void stopWatchingWindow(message.windowId)
     return
   }
 
   if (message?.type === 'DOM_AX_TREE_UPDATED') {
     const tabId = sender.tab?.id
     const windowId = sender.tab?.windowId
-    if (tabId == null || windowId == null) return
+    if (tabId == null || windowId == null || !watchingWindows.has(windowId)) return
 
-    void (async () => {
-      const update = message as DomAxTreeUpdatedMessage
-      await maybePushCdpAxTreeUpdate(tabId, windowId, update.focusedNodeId)
-    })()
+    scheduleDomUpdateCapture(tabId, windowId, (message as DomAxTreeUpdatedMessage).focusedNodeId)
     return
   }
 
   if (message?.type === 'DOM_FOCUS_CHANGED') {
     const tabId = sender.tab?.id
     const windowId = sender.tab?.windowId
-    if (tabId == null || windowId == null) return
+    if (tabId == null || windowId == null || !watchingWindows.has(windowId)) return
 
     void (async () => {
       const update = message as DomFocusChangedMessage
@@ -70,6 +80,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
   if (!watchingWindows.has(windowId)) return
+  void syncWatchingTabs(windowId, tabId)
   scheduleTabCapture(tabId, windowId)
 })
 
@@ -90,6 +101,56 @@ function scheduleTabCapture(tabId: number, windowId: number): void {
       void captureAndPushTabAxTree(tabId, windowId)
     }, PUSH_DEBOUNCE_MS),
   )
+}
+
+function scheduleDomUpdateCapture(
+  tabId: number,
+  windowId: number,
+  focusedNodeId: string | null,
+): void {
+  pendingDomFocusByTab.set(tabId, focusedNodeId)
+
+  const existing = domUpdateDebounceTimers.get(tabId)
+  if (existing) clearTimeout(existing)
+
+  domUpdateDebounceTimers.set(
+    tabId,
+    setTimeout(() => {
+      domUpdateDebounceTimers.delete(tabId)
+      const latestFocus = pendingDomFocusByTab.get(tabId) ?? focusedNodeId
+      pendingDomFocusByTab.delete(tabId)
+      void captureAndPushTabAxTree(tabId, windowId, latestFocus)
+    }, DOM_UPDATE_DEBOUNCE_MS),
+  )
+}
+
+async function captureAndPushTabAxTree(
+  tabId: number,
+  windowId: number,
+  focusedNodeIdOverride?: string | null,
+): Promise<void> {
+  if (!watchingWindows.has(windowId)) return
+  if (!(await isActiveTab(tabId, windowId))) return
+
+  if (captureInFlight.has(tabId)) {
+    pendingCaptureAfterFlight.set(tabId, { windowId, focusedNodeId: focusedNodeIdOverride })
+    return
+  }
+
+  captureInFlight.add(tabId)
+  try {
+    const response = await captureTabAxTree(tabId, focusedNodeIdOverride)
+    if (response.type === 'AX_TREE_RESULT') {
+      void chrome.runtime.sendMessage(response)
+    }
+  } finally {
+    captureInFlight.delete(tabId)
+    const pending = pendingCaptureAfterFlight.get(tabId)
+    if (pending) {
+      pendingCaptureAfterFlight.delete(tabId)
+      void captureAndPushTabAxTree(tabId, pending.windowId, pending.focusedNodeId)
+    }
+  }
 }
 
 async function isActiveTab(tabId: number, windowId: number): Promise<boolean> {
@@ -113,26 +174,77 @@ async function maybePushFocusChange(
   void chrome.runtime.sendMessage(push)
 }
 
-async function maybePushCdpAxTreeUpdate(
-  tabId: number,
-  windowId: number,
-  focusedNodeId: string | null,
-): Promise<void> {
-  if (!watchingWindows.has(windowId)) return
-  if (!(await isActiveTab(tabId, windowId))) return
-
-  const response = await captureTabAxTree(tabId, focusedNodeId)
-  if (response.type === 'AX_TREE_RESULT') {
-    void chrome.runtime.sendMessage(response)
+async function setTabWatching(tabId: number, watching: boolean): Promise<void> {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'SET_WATCHING', watching })
+  } catch {
+    // Content script may not be injected on this page yet.
   }
 }
 
-async function captureAndPushTabAxTree(tabId: number, windowId: number): Promise<void> {
-  if (!watchingWindows.has(windowId)) return
-  if (!(await isActiveTab(tabId, windowId))) return
+async function setWindowTabsWatching(windowId: number, watching: boolean): Promise<void> {
+  const tabs = await chrome.tabs.query({ windowId })
+  await Promise.all(tabs.map((tab) => (tab.id != null ? setTabWatching(tab.id, watching) : undefined)))
+}
 
-  const response = await captureTabAxTree(tabId)
-  void chrome.runtime.sendMessage(response)
+async function detachDebuggersInWindow(windowId: number): Promise<void> {
+  const tabs = await chrome.tabs.query({ windowId })
+  await Promise.all(
+    tabs.map((tab) => (tab.id != null && isDebuggerAttached(tab.id) ? detachDebugger(tab.id) : undefined)),
+  )
+}
+
+async function syncWatchingTabs(windowId: number, activeTabId: number): Promise<void> {
+  const tabs = await chrome.tabs.query({ windowId })
+  await Promise.all(
+    tabs.map((tab) => {
+      if (tab.id == null) return undefined
+      return setTabWatching(tab.id, tab.id === activeTabId)
+    }),
+  )
+
+  await Promise.all(
+    tabs.map((tab) =>
+      tab.id != null && tab.id !== activeTabId && isDebuggerAttached(tab.id)
+        ? detachDebugger(tab.id)
+        : undefined,
+    ),
+  )
+}
+
+async function startWatchingWindow(windowId: number): Promise<void> {
+  const wasWatching = watchingWindows.has(windowId)
+  watchingWindows.add(windowId)
+  if (wasWatching) return
+
+  const [active] = await chrome.tabs.query({ active: true, windowId })
+  if (active?.id != null) {
+    await syncWatchingTabs(windowId, active.id)
+  }
+}
+
+async function stopWatchingWindow(windowId: number): Promise<void> {
+  if (!watchingWindows.has(windowId)) return
+  watchingWindows.delete(windowId)
+
+  await setWindowTabsWatching(windowId, false)
+  await detachDebuggersInWindow(windowId)
+
+  const tabs = await chrome.tabs.query({ windowId })
+  for (const tab of tabs) {
+    if (tab.id == null) continue
+    const pushTimer = pushDebounceTimers.get(tab.id)
+    if (pushTimer) {
+      clearTimeout(pushTimer)
+      pushDebounceTimers.delete(tab.id)
+    }
+    const domTimer = domUpdateDebounceTimers.get(tab.id)
+    if (domTimer) {
+      clearTimeout(domTimer)
+      domUpdateDebounceTimers.delete(tab.id)
+    }
+    pendingDomFocusByTab.delete(tab.id)
+  }
 }
 
 async function captureActiveTabAxTree(): Promise<BackgroundResponse> {
@@ -140,6 +252,13 @@ async function captureActiveTabAxTree(): Promise<BackgroundResponse> {
 
   if (!tab?.id) {
     return { type: 'AX_TREE_ERROR', error: 'No active tab in this window.' }
+  }
+
+  if (tab.windowId == null || !watchingWindows.has(tab.windowId)) {
+    return {
+      type: 'AX_TREE_ERROR',
+      error: 'Open the side panel on this tab to capture the accessibility tree.',
+    }
   }
 
   return captureTabAxTree(tab.id)
@@ -175,6 +294,11 @@ async function captureTabAxTree(
     }
 
     const focusedNodeId = focusedNodeIdOverride ?? domTree.focusedNodeId
+    const canUseCdp = tab.windowId != null && watchingWindows.has(tab.windowId)
+
+    if (!canUseCdp) {
+      return buildAxTreeResult(tab, tabId, domTree.roots, focusedNodeId, 'dom')
+    }
 
     try {
       const roots = await fetchLinkedCdpAxTree(tabId)
