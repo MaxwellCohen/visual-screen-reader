@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { AxTreeNode } from '../shared/ax-tree'
-import { flattenAxTreeForReader, readerLinesToHtml } from './flatten-ax-tree-reader'
+import {
+  flattenAxTreeForReader,
+  readerLinesToHtml,
+  resolveFocusedReaderLineIndex,
+} from './flatten-ax-tree-reader'
 
 describe('reader presentation', () => {
   it('builds one reader document for role rendering and focus lookup', () => {
@@ -91,6 +95,74 @@ describe('reader presentation', () => {
       { kind: 'landmark', landmarkRole: 'main', depth: 0 },
       { kind: 'text', label: 'Discover', depth: 0, notes: 'not selected' },
     ])
+  })
+
+  it('gives nested focusable controls their own reader lines', () => {
+    const roots: AxTreeNode[] = [
+      {
+        nodeId: 'post',
+        domNodeId: 'body.0',
+        ignored: false,
+        role: 'generic',
+        children: [
+          {
+            nodeId: 'card-link',
+            domNodeId: 'body.0.0',
+            ignored: false,
+            role: 'link',
+            name: 'Connie · June 8',
+            attributes: { focusable: 'true', url: 'https://example.com/post' },
+            children: [
+              {
+                nodeId: 'reply',
+                domNodeId: 'body.0.0.0',
+                ignored: false,
+                role: 'button',
+                name: 'Reply (1 reply)',
+                attributes: { focusable: 'true' },
+                children: [],
+              },
+            ],
+          },
+        ],
+      },
+    ]
+
+    const document = flattenAxTreeForReader(roots)
+
+    expect(document.lines).toMatchObject([
+      { kind: 'link', label: 'Connie · June 8', focusId: 'body.0.0', depth: 0 },
+      { kind: 'button', label: 'Reply (1 reply)', focusId: 'body.0.0.0', depth: 1 },
+    ])
+    expect(document.focusLineIndex.get('body.0.0.0')).toBe(1)
+    expect(resolveFocusedReaderLineIndex(document, 'body.0.0.0')).toBe(1)
+  })
+
+  it('resolves focus to a parent reader line for deduped text children', () => {
+    const roots: AxTreeNode[] = [
+      {
+        nodeId: 'link-cdp',
+        domNodeId: 'body.1',
+        ignored: false,
+        role: 'link',
+        name: 'Docs',
+        children: [
+          {
+            nodeId: 'text-cdp',
+            domNodeId: 'body.1.0',
+            ignored: false,
+            role: 'statictext',
+            name: 'Docs',
+            children: [],
+          },
+        ],
+      },
+    ]
+
+    const document = flattenAxTreeForReader(roots)
+
+    expect(resolveFocusedReaderLineIndex(document, 'body.1')).toBe(0)
+    expect(resolveFocusedReaderLineIndex(document, 'body.1.0')).toBe(0)
   })
 
   it('exports escaped HTML from reader lines', () => {

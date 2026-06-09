@@ -171,6 +171,7 @@
         const focus = message as AxTreeFocusMessage
         if (tabId != null && focus.tabId !== tabId) return
         focusedNodeId = focus.nodeId
+        if (view === 'tree') readerFocusedNodeId = focus.nodeId
         return
       }
 
@@ -461,8 +462,8 @@
     margin: 0 0 0.4rem;
     padding: 0.3rem 0.45rem;
     border-radius: 3px;
-    background: color-mix(in srgb, #2563eb 12%, var(--bg));
-    border: 1px solid color-mix(in srgb, #2563eb 35%, transparent);
+    background: color-mix(in srgb, #3b82f6 12%, var(--bg));
+    border: 1px solid color-mix(in srgb, #3b82f6 35%, transparent);
     color: var(--text-h);
   }
 

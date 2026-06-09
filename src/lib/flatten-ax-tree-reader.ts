@@ -5,6 +5,7 @@ import {
   getRoleNotes,
   getSpeakableLabel,
   getStateNotes,
+  hasInteractiveDescendants,
   headingLevel,
   genericWrapperTag,
   isGenericContainer,
@@ -30,6 +31,8 @@ export interface ReaderLineItem {
   kind: ReaderLineKind
   label?: string
   notes?: string
+  /** Individual state/role annotations, rendered as discrete badges. */
+  noteTokens?: string[]
   role?: string
   headingLevel?: 1 | 2 | 3 | 4 | 5 | 6
   landmarkRole?: string
@@ -88,6 +91,13 @@ export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree
     focusLineIndex.set(focusId, lineIndex)
   }
 
+  function recordDescendantFocus(node: AxTreeNode, lineIndex: number): void {
+    for (const child of node.children) {
+      recordFocus(getAxTreeFocusId(child), lineIndex)
+      recordDescendantFocus(child, lineIndex)
+    }
+  }
+
   function pushLine(
     focusId: string,
     depth: number,
@@ -101,7 +111,14 @@ export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree
 
   function walk(node: AxTreeNode, parentLabel: string | undefined, depth: number): void {
     const label = getSpeakableLabel(node)
-    const notesText = formatNotes(getStateNotes(node), getRoleNotes(node)) || undefined
+    const stateNotes = getStateNotes(node)
+    const roleNotes = getRoleNotes(node)
+    const notesText = formatNotes(stateNotes, roleNotes) || undefined
+    const noteTokens = [...roleNotes, ...stateNotes]
+    const noteFields = {
+      notes: notesText,
+      noteTokens: noteTokens.length > 0 ? noteTokens : undefined,
+    }
     const dedup = shouldDedupChildren(node)
     const role = node.role ?? 'generic'
     const focusId = getAxTreeFocusId(node)
@@ -127,7 +144,7 @@ export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree
         pushLine(focusId, depth, {
           kind: 'generic',
           label,
-          notes: notesText,
+          ...noteFields,
           dedup: false,
           genericTag: genericWrapperTag(node),
         })
@@ -142,7 +159,7 @@ export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree
       pushLine(focusId, depth, {
         kind: 'generic',
         label,
-        notes: notesText,
+        ...noteFields,
         dedup: false,
         genericTag: genericWrapperTag(node),
       })
@@ -150,7 +167,7 @@ export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree
     }
 
     if (isPassthroughRole(role)) {
-      if (label) pushLine(focusId, depth, { kind: 'text', label, notes: notesText, dedup: false })
+      if (label) pushLine(focusId, depth, { kind: 'text', label, ...noteFields, dedup: false })
       else recordFocus(focusId, Math.max(0, lines.length - 1))
       for (const child of node.children) walk(child, label, depth)
       return
@@ -160,7 +177,7 @@ export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree
       pushLine(focusId, depth, {
         kind: 'heading',
         label,
-        notes: notesText,
+        ...noteFields,
         dedup,
         headingLevel: hLevel,
         role,
@@ -170,30 +187,40 @@ export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree
     }
 
     if (role === 'image') {
-      pushLine(focusId, depth, { kind: 'image', label, notes: notesText, dedup: true, role })
+      pushLine(focusId, depth, { kind: 'image', label, ...noteFields, dedup: true, role })
       return
     }
 
     if (role === 'link') {
-      pushLine(focusId, depth, { kind: 'link', label, notes: notesText, dedup, role })
+      const lineIndex = pushLine(focusId, depth, { kind: 'link', label, ...noteFields, dedup, role })
       if (!dedup) for (const child of node.children) walk(child, label, depth)
+      else if (hasInteractiveDescendants(node)) {
+        for (const child of node.children) walk(child, label, depth + 1)
+      } else {
+        recordDescendantFocus(node, lineIndex)
+      }
       return
     }
 
     if (role === 'button') {
-      pushLine(focusId, depth, { kind: 'button', label, notes: notesText, dedup, role })
+      const lineIndex = pushLine(focusId, depth, { kind: 'button', label, ...noteFields, dedup, role })
       if (!dedup) for (const child of node.children) walk(child, label, depth)
+      else if (hasInteractiveDescendants(node)) {
+        for (const child of node.children) walk(child, label, depth + 1)
+      } else {
+        recordDescendantFocus(node, lineIndex)
+      }
       return
     }
 
     if (role === 'checkbox' || role === 'radio') {
-      pushLine(focusId, depth, { kind: 'control', label, notes: notesText, dedup, role })
+      pushLine(focusId, depth, { kind: 'control', label, ...noteFields, dedup, role })
       if (!dedup) for (const child of node.children) walk(child, label, depth)
       return
     }
 
     if (role === 'paragraph') {
-      pushLine(focusId, depth, { kind: 'text', label, notes: notesText, dedup, role })
+      pushLine(focusId, depth, { kind: 'text', label, ...noteFields, dedup, role })
       if (!dedup) for (const child of node.children) walk(child, label, depth)
       return
     }
@@ -205,7 +232,7 @@ export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree
     }
 
     if (role === 'listitem') {
-      pushLine(focusId, depth, { kind: 'listitem', label, notes: notesText, dedup: false, role })
+      pushLine(focusId, depth, { kind: 'listitem', label, ...noteFields, dedup: false, role })
       for (const child of node.children) walk(child, label, depth + 1)
       return
     }
@@ -214,7 +241,7 @@ export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree
       pushLine(focusId, depth, {
         kind: 'landmark',
         label: dedup ? undefined : label,
-        notes: notesText,
+        ...noteFields,
         dedup,
         role,
         landmarkRole: role,
@@ -223,7 +250,7 @@ export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree
       return
     }
 
-    if (label) pushLine(focusId, depth, { kind: 'text', label, notes: notesText, dedup: false, role })
+    if (label) pushLine(focusId, depth, { kind: 'text', label, ...noteFields, dedup: false, role })
     else recordFocus(focusId, Math.max(0, lines.length - 1))
     if (!dedup) for (const child of node.children) walk(child, label, depth)
   }
@@ -232,6 +259,18 @@ export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree
 
   const { lineOffsets, totalHeight } = buildLineOffsets(lines)
   return { lines, focusLineIndex, lineOffsets, totalHeight }
+}
+
+export function resolveFocusedReaderLineIndex(
+  flattened: FlattenedReaderTree,
+  focusedNodeId: string | null,
+): number | undefined {
+  if (!focusedNodeId) return undefined
+
+  const exactIndex = flattened.lines.findIndex((line) => line.focusId === focusedNodeId)
+  if (exactIndex >= 0) return exactIndex
+
+  return flattened.focusLineIndex.get(focusedNodeId)
 }
 
 export function findVisibleLineRange(

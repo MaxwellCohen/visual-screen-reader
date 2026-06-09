@@ -108,6 +108,41 @@ export function shouldDedupChildren(node: AxTreeNode): boolean {
   return role != null && DEDUP_ROLES.has(role) && Boolean(getSpeakableLabel(node))
 }
 
+const INTERACTIVE_DESCENDANT_ROLES = new Set([
+  'link',
+  'button',
+  'checkbox',
+  'radio',
+  'menuitem',
+  'menuitemcheckbox',
+  'menuitemradio',
+  'option',
+  'tab',
+  'treeitem',
+  'switch',
+  'textbox',
+  'combobox',
+  'searchbox',
+  'slider',
+  'spinbutton',
+])
+
+/** Whether a node contains nested controls/links that need their own reader lines. */
+export function hasInteractiveDescendants(node: AxTreeNode): boolean {
+  function visit(children: AxTreeNode[]): boolean {
+    for (const child of children) {
+      const role = child.role?.toLowerCase()
+      if (role != null && INTERACTIVE_DESCENDANT_ROLES.has(role)) {
+        if (getSpeakableLabel(child) || child.attributes?.focusable === 'true') return true
+      }
+      if (child.children.length > 0 && visit(child.children)) return true
+    }
+    return false
+  }
+
+  return visit(node.children)
+}
+
 export function isRedundantTextNode(node: AxTreeNode, parentLabel?: string): boolean {
   const role = node.role?.toLowerCase()
   if (role == null || !REDUNDANT_TEXT_ROLES.has(role)) return false
