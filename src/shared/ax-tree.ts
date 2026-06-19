@@ -1,7 +1,7 @@
 export interface AxTreeNode {
   /** CDP accessibility node id (or DOM path when DOM-derived). */
   nodeId: string
-  /** DOM path linked via stamped `data-vsr-node-id` when backed by an element. */
+  /** Stable body-relative DOM path when backed by an element. */
   domNodeId?: string
   backendDOMNodeId?: number
   ignored: boolean

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   childDomNodeId,
-  DOM_NODE_ID_ATTR,
   DOM_ROOT_NODE_ID,
   domNodeIdFromPath,
   getAxTreeFocusId,
-  readDomNodeIdAttribute,
+  linkBackendDomNodeIdsFromBody,
+  readCdpDomAttribute,
 } from './dom-link'
 
 describe('DOM Link', () => {
@@ -21,9 +21,34 @@ describe('DOM Link', () => {
     expect(getAxTreeFocusId({ nodeId: 'cdp-7' })).toBe('cdp-7')
   })
 
-  it('reads stamped DOM node ids from CDP attribute pairs', () => {
-    expect(readDomNodeIdAttribute(['class', 'button', DOM_NODE_ID_ATTR, 'body.2'])).toBe('body.2')
-    expect(readDomNodeIdAttribute(['class', 'button'])).toBeUndefined()
-    expect(readDomNodeIdAttribute(undefined)).toBeUndefined()
+  it('reads CDP DOM attribute pairs', () => {
+    expect(readCdpDomAttribute(['class', 'button', 'data-foo', 'bar'], 'data-foo')).toBe('bar')
+    expect(readCdpDomAttribute(['class', 'button'], 'data-foo')).toBeUndefined()
+    expect(readCdpDomAttribute(undefined)).toBeUndefined()
+  })
+
+  it('links backend node ids from body-relative paths', () => {
+    const info = { domNodeIds: new Map<number, string>(), tagNames: new Map<number, string>() }
+    linkBackendDomNodeIdsFromBody(
+      {
+        backendNodeId: 1,
+        localName: 'body',
+        children: [
+          {
+            backendNodeId: 2,
+            localName: 'main',
+            children: [{ backendNodeId: 3, localName: 'button' }],
+          },
+          { backendNodeId: 4, localName: 'script' },
+        ],
+      },
+      info,
+    )
+
+    expect(info.domNodeIds.get(1)).toBe('body')
+    expect(info.domNodeIds.get(2)).toBe('body.0')
+    expect(info.domNodeIds.get(3)).toBe('body.0.0')
+    expect(info.domNodeIds.has(4)).toBe(false)
+    expect(info.tagNames.get(3)).toBe('button')
   })
 })

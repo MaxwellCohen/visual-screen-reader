@@ -1,4 +1,4 @@
-import { buildDomAxTree, getFocusedAxTreeNodeId, stampDomNodeIds } from './build-dom-ax-tree'
+import { buildDomAxTree, getFocusedAxTreeNodeId } from './build-dom-ax-tree'
 import { countAxTreeNodes } from '../shared/ax-tree'
 import { setAxTreeWatching, startAxTreeObserver } from './observe-ax-tree'
 import type { DomAxTreeResultMessage } from '../shared/messages'
@@ -12,7 +12,6 @@ if (window === window.top) {
 
     if (message?.type !== 'GET_AX_TREE') return
 
-    stampDomNodeIds()
     const roots = buildDomAxTree()
     const response: DomAxTreeResultMessage = {
       type: 'DOM_AX_TREE_RESULT',

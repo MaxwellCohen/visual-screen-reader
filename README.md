@@ -35,12 +35,12 @@ Built with **Svelte 5**, **TypeScript**, and **Vite**, using [@crxjs/vite-plugin
                                          │                                                │
                                          │  debounced push on tab/DOM/focus changes       │
                                          │  MutationObserver + focus listeners            │
-                                         │  stamp data-vsr-node-id on elements            │
+                                         │  compute body-relative paths via CDP DOM tree    │
                                          └────────────────────────────────────────────────┘
 ```
 
-1. The **content script** watches the DOM (mutations, focus, navigation) and stamps stable `data-vsr-node-id` paths on elements.
-2. On each update trigger, the **service worker** attaches the debugger, fetches the CDP accessibility tree, and links nodes to DOM paths via `backendDOMNodeId`.
+1. The **content script** watches the DOM (mutations, focus, navigation) and reports focus using stable body-relative node paths.
+2. On each update trigger, the **service worker** attaches the debugger, fetches the CDP accessibility tree, and links nodes to those paths via `backendDOMNodeId` and `DOM.getDocument` (without mutating the page DOM).
 3. The **side panel** renders the CDP tree (screen-reader-style or JSON) and highlights focus using the linked DOM node ids.
 4. If CDP capture fails (e.g. another debugger is attached), the extension falls back to a DOM-derived tree.
 

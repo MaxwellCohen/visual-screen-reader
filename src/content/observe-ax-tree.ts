@@ -1,8 +1,4 @@
-import {
-  getAxTreeNodeIdForElement,
-  getFocusedAxTreeNodeId,
-  stampDomNodeIds,
-} from './build-dom-ax-tree'
+import { getAxTreeNodeIdForElement, getFocusedAxTreeNodeId } from './build-dom-ax-tree'
 import type { DomAxTreeUpdatedMessage, DomFocusChangedMessage } from '../shared/messages'
 
 const DEBOUNCE_MS = 200
@@ -21,7 +17,6 @@ export function setAxTreeWatching(value: boolean): void {
 
 function pushDomAxTreeUpdate(): void {
   if (!watching) return
-  stampDomNodeIds()
   const focusedNodeId = getFocusedAxTreeNodeId()
   const message: DomAxTreeUpdatedMessage = {
     type: 'DOM_AX_TREE_UPDATED',

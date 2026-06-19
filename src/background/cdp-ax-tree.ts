@@ -1,5 +1,9 @@
 import type { AxTreeNode } from '../shared/ax-tree'
-import { readDomNodeIdAttribute } from '../shared/dom-link'
+import {
+  findBodyCdpNode,
+  linkBackendDomNodeIdsFromBody,
+  type BackendDomLinkInfo,
+} from '../shared/dom-link'
 import { buildAxTree, type AxNode } from './cdp-ax-adapter'
 
 const CDP_PROTOCOL = '1.3'
@@ -16,10 +20,7 @@ interface CdpDomNode {
   shadowRoots?: CdpDomNode[]
 }
 
-interface BackendDomInfo {
-  domNodeIds: Map<number, string>
-  tagNames: Map<number, string>
-}
+interface BackendDomInfo extends BackendDomLinkInfo {}
 
 interface GetFullAxTreeResult {
   nodes?: AxNode[]
@@ -84,23 +85,15 @@ export async function detachAllDebuggers(): Promise<void> {
   await Promise.all([...attachedTabs].map((tabId) => detachDebugger(tabId)))
 }
 
-function collectDomInfoFromNode(node: CdpDomNode, info: BackendDomInfo): void {
-  if (node.backendNodeId == null) return
-
-  if (node.localName) {
-    info.tagNames.set(node.backendNodeId, node.localName.toLowerCase())
-  }
-
-  const domNodeId = readDomNodeIdAttribute(node.attributes)
-  if (domNodeId) {
-    info.domNodeIds.set(node.backendNodeId, domNodeId)
-  }
+function collectTagNameFromNode(node: CdpDomNode, info: BackendDomInfo): void {
+  if (node.backendNodeId == null || !node.localName) return
+  info.tagNames.set(node.backendNodeId, node.localName.toLowerCase())
 }
 
 function walkDomTree(node: CdpDomNode | undefined, info: BackendDomInfo): void {
   if (!node) return
 
-  collectDomInfoFromNode(node, info)
+  collectTagNameFromNode(node, info)
 
   for (const child of node.children ?? []) {
     walkDomTree(child, info)
@@ -122,6 +115,8 @@ async function fetchBackendDomInfo(tabId: number): Promise<BackendDomInfo> {
   })
   const info = emptyBackendDomInfo()
   walkDomTree(doc.root, info)
+  const body = findBodyCdpNode(doc.root)
+  if (body) linkBackendDomNodeIdsFromBody(body, info)
   return info
 }
 
@@ -143,7 +138,7 @@ async function fetchBackendDomInfoViaDescribe(
           backendNodeId,
           depth: 0,
         })
-        if (result.node) collectDomInfoFromNode(result.node, info)
+        if (result.node) collectTagNameFromNode(result.node, info)
       } catch {
         // Some AX nodes reference backend ids that cannot be described.
       }

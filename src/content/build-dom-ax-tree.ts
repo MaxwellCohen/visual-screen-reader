@@ -1,20 +1,11 @@
 import type { AxTreeNode } from '../shared/ax-tree'
 import {
-  childDomNodeId,
-  DOM_NODE_ID_ATTR,
   DOM_ROOT_NODE_ID,
   domNodeIdFromPath,
+  IGNORED_DOM_TAGS,
 } from '../shared/dom-link'
 
-const IGNORED_TAGS = new Set([
-  'script',
-  'style',
-  'noscript',
-  'template',
-  'link',
-  'meta',
-  'head',
-])
+const IGNORED_TAGS = IGNORED_DOM_TAGS
 
 function isHidden(el: Element): boolean {
   if (!(el instanceof HTMLElement)) return false
@@ -304,45 +295,6 @@ export function getFocusedAxTreeNodeId(): string | null {
   if (!(active instanceof Element)) return null
   if (active === document.body || active === document.documentElement) return null
   return getAxTreeNodeIdForElement(active)
-}
-
-function stampElement(el: Element, nodeId: string): void {
-  el.setAttribute(DOM_NODE_ID_ATTR, nodeId)
-}
-
-function clearStamp(el: Element): void {
-  el.removeAttribute(DOM_NODE_ID_ATTR)
-}
-
-function stampElementTree(el: Element, nodeId: string): void {
-  const tag = el.tagName.toLowerCase()
-  if (IGNORED_TAGS.has(tag) || isHidden(el)) {
-    clearStamp(el)
-    return
-  }
-
-  const ignored = el.getAttribute('aria-hidden') === 'true'
-  let hasIncludedChild = false
-  let childIndex = 0
-
-  for (const child of el.children) {
-    const childNodeId = childDomNodeId(nodeId, childIndex)
-    childIndex += 1
-    stampElementTree(child, childNodeId)
-    if (child.hasAttribute(DOM_NODE_ID_ATTR)) hasIncludedChild = true
-  }
-
-  if (ignored && !hasIncludedChild) {
-    clearStamp(el)
-    return
-  }
-
-  stampElement(el, nodeId)
-}
-
-/** Stamp stable DOM paths on elements so CDP AX nodes can be linked back to the page. */
-export function stampDomNodeIds(): void {
-  if (document.body) stampElementTree(document.body, DOM_ROOT_NODE_ID)
 }
 
 export function buildDomAxTree(): AxTreeNode[] {
