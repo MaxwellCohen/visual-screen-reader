@@ -9,10 +9,11 @@ import { buildAxTree, type AxNode } from './cdp-ax-adapter'
 const CDP_PROTOCOL = '1.3'
 
 const attachedTabs = new Set<number>()
-let accessibilityEnabled = false
+const accessibilityEnabledTabs = new Set<number>()
 
 interface CdpDomNode {
   backendNodeId?: number
+  nodeType?: number
   localName?: string
   attributes?: string[]
   children?: CdpDomNode[]
@@ -48,25 +49,49 @@ export function isDebuggerAttached(tabId: number): boolean {
   return attachedTabs.has(tabId)
 }
 
-export async function attachDebugger(tabId: number): Promise<void> {
-  if (attachedTabs.has(tabId)) return
-
-  await new Promise<void>((resolve, reject) => {
+function attachOnce(tabId: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     chrome.debugger.attach({ tabId }, CDP_PROTOCOL, () => {
       const err = chrome.runtime.lastError
       if (err) reject(new Error(err.message))
-      else {
-        attachedTabs.add(tabId)
-        resolve()
-      }
+      else resolve()
     })
   })
 }
 
+/** Detach this extension's session (if any); errors are expected when nothing is attached. */
+function detachQuietly(tabId: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    chrome.debugger.detach({ tabId }, () => {
+      void chrome.runtime.lastError
+      resolve()
+    })
+  })
+}
+
+export async function attachDebugger(tabId: number): Promise<void> {
+  if (attachedTabs.has(tabId)) return
+
+  try {
+    await attachOnce(tabId)
+  } catch (err) {
+    // After a service worker restart `attachedTabs` is empty but our previous session can still be
+    // attached. `detach` only affects this extension's own session, so retry once after it.
+    await detachQuietly(tabId)
+    try {
+      await attachOnce(tabId)
+    } catch {
+      throw err
+    }
+  }
+
+  attachedTabs.add(tabId)
+}
+
 async function ensureAccessibilityEnabled(tabId: number): Promise<void> {
-  if (accessibilityEnabled) return
+  if (accessibilityEnabledTabs.has(tabId)) return
   await sendDebuggerCommand(tabId, 'Accessibility.enable', {})
-  accessibilityEnabled = true
+  accessibilityEnabledTabs.add(tabId)
 }
 
 export async function detachDebugger(tabId: number): Promise<void> {
@@ -75,7 +100,7 @@ export async function detachDebugger(tabId: number): Promise<void> {
   await new Promise<void>((resolve) => {
     chrome.debugger.detach({ tabId }, () => {
       attachedTabs.delete(tabId)
-      accessibilityEnabled = false
+      accessibilityEnabledTabs.delete(tabId)
       resolve()
     })
   })
@@ -182,7 +207,9 @@ export async function fetchLinkedCdpAxTree(tabId: number): Promise<AxTreeNode[]>
 }
 
 chrome.debugger.onDetach.addListener((source, reason) => {
-  if (source.tabId != null) attachedTabs.delete(source.tabId)
-  accessibilityEnabled = false
+  if (source.tabId != null) {
+    attachedTabs.delete(source.tabId)
+    accessibilityEnabledTabs.delete(source.tabId)
+  }
   console.debug('[visual-screen-reader] debugger detached', source.tabId, reason)
 })

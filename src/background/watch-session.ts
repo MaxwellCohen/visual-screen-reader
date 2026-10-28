@@ -1,4 +1,8 @@
-import type { AxTreeFocusMessage, AxTreePushMessage, BackgroundResponse } from '../shared/messages'
+import type {
+  AxTreeFocusMessage,
+  BackgroundResponse,
+  SidePanelPushMessage,
+} from '../shared/messages'
 
 export interface WatchSessionDeps {
   queryTabsInWindow(windowId: number): Promise<chrome.tabs.Tab[]>
@@ -7,7 +11,8 @@ export interface WatchSessionDeps {
   detachDebugger(tabId: number): Promise<void>
   isDebuggerAttached(tabId: number): boolean
   captureTabAxTree(tabId: number, focusedNodeIdOverride?: string | null): Promise<BackgroundResponse>
-  pushMessage(message: AxTreePushMessage | AxTreeFocusMessage): void
+  /** Deliver to the side panel open in `windowId` (no-op if none is connected). */
+  pushMessage(windowId: number, message: SidePanelPushMessage): void
 }
 
 export interface WatchSession {
@@ -27,17 +32,24 @@ export interface WatchSession {
 
 const PUSH_DEBOUNCE_MS = 200
 const DOM_UPDATE_DEBOUNCE_MS = 250
+/**
+ * After a capture, wait roughly as long as it took before starting the next one
+ * so pages that mutate constantly don't keep CDP (and the page renderer) busy.
+ */
+const CAPTURE_COOLDOWN_FACTOR = 1
+const MAX_CAPTURE_COOLDOWN_MS = 3000
 
 export function createWatchSession(deps: WatchSessionDeps): WatchSession {
   const watchingWindows = new Set<number>()
   const pushDebounceTimers = new Map<number, ReturnType<typeof setTimeout>>()
   const domUpdateDebounceTimers = new Map<number, ReturnType<typeof setTimeout>>()
-  const pendingDomFocusByTab = new Map<number, string | null>()
   const captureInFlight = new Set<number>()
   const pendingCaptureAfterFlight = new Map<
     number,
     { windowId: number; focusedNodeId?: string | null }
   >()
+  const nextCaptureAllowedAt = new Map<number, number>()
+  const cooldownTimers = new Map<number, ReturnType<typeof setTimeout>>()
 
   function isWatchingWindow(windowId: number): boolean {
     return watchingWindows.has(windowId)
@@ -66,8 +78,6 @@ export function createWatchSession(deps: WatchSessionDeps): WatchSession {
     windowId: number,
     focusedNodeId: string | null,
   ): void {
-    pendingDomFocusByTab.set(tabId, focusedNodeId)
-
     const existing = domUpdateDebounceTimers.get(tabId)
     if (existing) clearTimeout(existing)
 
@@ -75,9 +85,7 @@ export function createWatchSession(deps: WatchSessionDeps): WatchSession {
       tabId,
       setTimeout(() => {
         domUpdateDebounceTimers.delete(tabId)
-        const latestFocus = pendingDomFocusByTab.get(tabId) ?? focusedNodeId
-        pendingDomFocusByTab.delete(tabId)
-        void captureAndPushTabAxTree(tabId, windowId, latestFocus)
+        void captureAndPushTabAxTree(tabId, windowId, focusedNodeId)
       }, DOM_UPDATE_DEBOUNCE_MS),
     )
   }
@@ -90,25 +98,46 @@ export function createWatchSession(deps: WatchSessionDeps): WatchSession {
     if (!watchingWindows.has(windowId)) return
     if (!(await isActiveTab(tabId, windowId))) return
 
-    if (captureInFlight.has(tabId)) {
+    if (captureInFlight.has(tabId) || cooldownTimers.has(tabId)) {
       pendingCaptureAfterFlight.set(tabId, { windowId, focusedNodeId: focusedNodeIdOverride })
       return
     }
 
+    const waitMs = (nextCaptureAllowedAt.get(tabId) ?? 0) - Date.now()
+    if (waitMs > 0) {
+      pendingCaptureAfterFlight.set(tabId, { windowId, focusedNodeId: focusedNodeIdOverride })
+      scheduleCooldownCapture(tabId, waitMs)
+      return
+    }
+
     captureInFlight.add(tabId)
+    const startedAt = Date.now()
     try {
       const response = await deps.captureTabAxTree(tabId, focusedNodeIdOverride)
-      if (response.type === 'AX_TREE_RESULT') {
-        deps.pushMessage(response)
-      }
+      // Errors are pushed too so the panel never keeps showing a previous page's tree
+      // (e.g. after switching to a chrome:// tab).
+      if (watchingWindows.has(windowId)) deps.pushMessage(windowId, response)
     } finally {
       captureInFlight.delete(tabId)
-      const pending = pendingCaptureAfterFlight.get(tabId)
-      if (pending) {
+      const elapsed = Date.now() - startedAt
+      const cooldown = Math.min(MAX_CAPTURE_COOLDOWN_MS, elapsed * CAPTURE_COOLDOWN_FACTOR)
+      nextCaptureAllowedAt.set(tabId, Date.now() + cooldown)
+      if (pendingCaptureAfterFlight.has(tabId)) scheduleCooldownCapture(tabId, cooldown)
+    }
+  }
+
+  function scheduleCooldownCapture(tabId: number, delayMs: number): void {
+    if (cooldownTimers.has(tabId)) return
+    cooldownTimers.set(
+      tabId,
+      setTimeout(() => {
+        cooldownTimers.delete(tabId)
+        const pending = pendingCaptureAfterFlight.get(tabId)
+        if (!pending) return
         pendingCaptureAfterFlight.delete(tabId)
         void captureAndPushTabAxTree(tabId, pending.windowId, pending.focusedNodeId)
-      }
-    }
+      }, delayMs),
+    )
   }
 
   async function maybePushFocusChange(
@@ -124,7 +153,7 @@ export function createWatchSession(deps: WatchSessionDeps): WatchSession {
       tabId,
       nodeId,
     }
-    deps.pushMessage(push)
+    deps.pushMessage(windowId, push)
   }
 
   async function syncWatchingTabs(windowId: number, activeTabId: number): Promise<void> {
@@ -180,7 +209,13 @@ export function createWatchSession(deps: WatchSessionDeps): WatchSession {
         clearTimeout(domTimer)
         domUpdateDebounceTimers.delete(tab.id)
       }
-      pendingDomFocusByTab.delete(tab.id)
+      const cooldownTimer = cooldownTimers.get(tab.id)
+      if (cooldownTimer) {
+        clearTimeout(cooldownTimer)
+        cooldownTimers.delete(tab.id)
+      }
+      pendingCaptureAfterFlight.delete(tab.id)
+      nextCaptureAllowedAt.delete(tab.id)
     }
   }
 

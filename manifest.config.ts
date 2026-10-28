@@ -3,7 +3,7 @@ import { defineManifest } from '@crxjs/vite-plugin'
 export default defineManifest({
   manifest_version: 3,
   name: 'Visual Screen Reader',
-  description: 'Visual screen reader overlay for web pages',
+  description: 'Visual screen reader side panel for web pages',
   version: '0.0.1',
   icons: {
     16: 'public/favicon.svg',
@@ -21,7 +21,7 @@ export default defineManifest({
   side_panel: {
     default_path: 'src/sidepanel/index.html',
   },
-  permissions: ['storage', 'activeTab', 'scripting', 'sidePanel', 'tabs', 'debugger'],
+  permissions: ['sidePanel', 'tabs', 'debugger'],
   host_permissions: ['<all_urls>'],
   background: {
     service_worker: 'src/background/index.ts',

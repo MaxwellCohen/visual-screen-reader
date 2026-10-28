@@ -65,7 +65,100 @@ describe('Watch Session', () => {
 
     expect(deps.captureTabAxTree).toHaveBeenCalledTimes(1)
     expect(deps.captureTabAxTree).toHaveBeenCalledWith(1, 'body.1')
-    expect(deps.pushMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'AX_TREE_RESULT' }))
+    expect(deps.pushMessage).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({ type: 'AX_TREE_RESULT' }),
+    )
+  })
+
+  it('pushes capture errors so the panel drops a stale tree', async () => {
+    const deps = makeDeps({
+      captureTabAxTree: vi.fn(async () => ({
+        type: 'AX_TREE_ERROR' as const,
+        error: 'Cannot read the accessibility tree on this page.',
+      })),
+    })
+    const session = createWatchSession(deps)
+    await session.startWatchingWindow(10)
+
+    await session.captureAndPushTabAxTree(1, 10)
+
+    expect(deps.pushMessage).toHaveBeenCalledWith(10, {
+      type: 'AX_TREE_ERROR',
+      error: 'Cannot read the accessibility tree on this page.',
+    })
+  })
+
+  it('does not push a capture that finishes after the panel closed', async () => {
+    let finishCapture!: (value: Awaited<ReturnType<WatchSessionDeps['captureTabAxTree']>>) => void
+    const deps = makeDeps({
+      captureTabAxTree: vi.fn(
+        () =>
+          new Promise<Awaited<ReturnType<WatchSessionDeps['captureTabAxTree']>>>((resolve) => {
+            finishCapture = resolve
+          }),
+      ),
+    })
+    const session = createWatchSession(deps)
+    await session.startWatchingWindow(10)
+
+    const capture = session.captureAndPushTabAxTree(1, 10)
+    await vi.waitFor(() => expect(deps.captureTabAxTree).toHaveBeenCalled())
+    await session.stopWatchingWindow(10)
+    finishCapture({ type: 'AX_TREE_ERROR', error: 'late' })
+    await capture
+
+    expect(deps.pushMessage).not.toHaveBeenCalled()
+  })
+
+  it('waits roughly as long as the previous capture took before capturing again', async () => {
+    const deps = makeDeps({
+      captureTabAxTree: vi.fn(async () => {
+        vi.advanceTimersByTime(1000) // simulate a slow (1s) capture
+        return { type: 'AX_TREE_ERROR' as const, error: 'x' }
+      }),
+    })
+    const session = createWatchSession(deps)
+    await session.startWatchingWindow(10)
+
+    await session.captureAndPushTabAxTree(1, 10)
+    await session.captureAndPushTabAxTree(1, 10, 'body.4')
+    expect(deps.captureTabAxTree).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(900)
+    expect(deps.captureTabAxTree).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(200)
+    expect(deps.captureTabAxTree).toHaveBeenCalledTimes(2)
+    expect(deps.captureTabAxTree).toHaveBeenLastCalledWith(1, 'body.4')
+  })
+
+  it('drops a cooldown-deferred capture when the panel closes', async () => {
+    const deps = makeDeps({
+      captureTabAxTree: vi.fn(async () => {
+        vi.advanceTimersByTime(1000)
+        return { type: 'AX_TREE_ERROR' as const, error: 'x' }
+      }),
+    })
+    const session = createWatchSession(deps)
+    await session.startWatchingWindow(10)
+
+    await session.captureAndPushTabAxTree(1, 10)
+    await session.captureAndPushTabAxTree(1, 10)
+    await session.stopWatchingWindow(10)
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(deps.captureTabAxTree).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores DOM updates from windows without an open panel', async () => {
+    const deps = makeDeps()
+    const session = createWatchSession(deps)
+
+    session.handleDomUpdate(1, 10, 'body.0')
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(deps.captureTabAxTree).not.toHaveBeenCalled()
   })
 
   it('serializes captures and runs the latest pending request after an in-flight capture', async () => {

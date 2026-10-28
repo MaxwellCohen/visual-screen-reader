@@ -43,11 +43,13 @@ const CDP_STATE_PROPERTIES = new Set([
   'multiselectable',
 ])
 
-function axPropertyValue(props: AxProperty[] | undefined, name: string): string | undefined {
-  const prop = props?.find((p) => p.name === name)
-  const value = prop?.value
+function axValueString(value: AxValue | undefined): string | undefined {
   if (value?.type === 'boolean') return value.value === 'true' ? 'true' : 'false'
   return value?.value
+}
+
+function axPropertyValue(props: AxProperty[] | undefined, name: string): string | undefined {
+  return axValueString(props?.find((p) => p.name === name)?.value)
 }
 
 function getNodeStatesFromProperties(props: AxProperty[] | undefined): Record<string, boolean | string> | undefined {
@@ -55,7 +57,7 @@ function getNodeStatesFromProperties(props: AxProperty[] | undefined): Record<st
 
   for (const prop of props ?? []) {
     if (!CDP_STATE_PROPERTIES.has(prop.name)) continue
-    const raw = axPropertyValue(props, prop.name)
+    const raw = axValueString(prop.value)
     if (raw == null) continue
     if (raw === 'true') states[prop.name] = true
     else if (raw === 'false') states[prop.name] = false

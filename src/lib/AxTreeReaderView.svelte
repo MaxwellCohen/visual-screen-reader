@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import type { AxTreeNode } from '../shared/ax-tree'
   import AxTreeReaderLine from './AxTreeReaderLine.svelte'
   import {
@@ -58,29 +59,35 @@
     }
   }
 
+  function scrollLineIntoView(lineIndex: number): void {
+    const focusId = flattened.lines[lineIndex]?.focusId
+    if (!container || !focusId) return
+    const el = container.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(focusId)}"]`)
+    el?.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+  }
+
   $effect(() => {
     const lineIndex = focusedLineIndex
     if (lineIndex == null || !container) return
 
-    if (useVirtual) {
-
-      const top = flattened.lineOffsets[lineIndex]!
-      const bottom = flattened.lineOffsets[lineIndex + 1]!
-      const viewTop = container.scrollTop
-      const viewBottom = viewTop + viewportHeight
-
-      if (top < viewTop) {
-        container.scrollTop = top
-      } else if (bottom > viewBottom) {
-        container.scrollTop = bottom - viewportHeight
-      }
+    if (!useVirtual) {
+      scrollLineIntoView(lineIndex)
       return
     }
 
-    const focusId = focusedNodeId
-    if (!focusId) return
-    const el = container.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(focusId)}"]`)
-    el?.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+    // Offsets are estimates: jump near the line so it renders, then correct against the real row.
+    const top = flattened.lineOffsets[lineIndex]!
+    const bottom = flattened.lineOffsets[lineIndex + 1]!
+    const viewTop = container.scrollTop
+    const viewBottom = viewTop + viewportHeight
+
+    if (top < viewTop) {
+      container.scrollTop = top
+    } else if (bottom > viewBottom) {
+      container.scrollTop = bottom - viewportHeight
+    }
+    scrollTop = container.scrollTop
+    void tick().then(() => scrollLineIntoView(lineIndex))
   })
 </script>
 

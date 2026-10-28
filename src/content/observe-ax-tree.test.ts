@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { setAxTreeWatching, startAxTreeObserver } from './observe-ax-tree'
+import { setAxTreeWatching, startAxTreeObserver, stopAxTreeObserver } from './observe-ax-tree'
 
 describe('observe-ax-tree', () => {
   const sendMessage = vi.fn()
@@ -18,6 +18,7 @@ describe('observe-ax-tree', () => {
   })
 
   afterEach(() => {
+    stopAxTreeObserver()
     vi.useRealTimers()
     vi.unstubAllGlobals()
   })
@@ -34,5 +35,38 @@ describe('observe-ax-tree', () => {
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'DOM_AX_TREE_UPDATED' }),
     )
+  })
+
+  it('reports DOM mutations while watching', async () => {
+    document.body.append(document.createElement('p'))
+    await Promise.resolve()
+    vi.advanceTimersByTime(200)
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'DOM_AX_TREE_UPDATED' }),
+    )
+  })
+
+  it('stops observing and reporting once watching is turned off', async () => {
+    setAxTreeWatching(false)
+
+    document.body.append(document.createElement('p'))
+    const input = document.getElementById('field') as HTMLInputElement
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    await Promise.resolve()
+    vi.advanceTimersByTime(500)
+
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('survives an invalidated extension context', () => {
+    sendMessage.mockImplementationOnce(() => {
+      throw new Error('Extension context invalidated.')
+    })
+    const input = document.getElementById('field') as HTMLInputElement
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+
+    expect(() => vi.advanceTimersByTime(200)).not.toThrow()
   })
 })

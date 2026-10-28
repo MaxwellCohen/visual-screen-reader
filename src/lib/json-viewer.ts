@@ -36,6 +36,9 @@ export function getObjectPreview(value: Record<string, unknown>): string {
   return `{${keys.length} key${keys.length === 1 ? '' : 's'}}`
 }
 
+/** Collections render this many entries at a time; large AX trees otherwise mount every node. */
+export const JSON_ENTRY_PAGE_SIZE = 100
+
 export function childPath(parentPath: string, key: string | number): string {
   return parentPath === '' ? String(key) : `${parentPath}.${key}`
 }

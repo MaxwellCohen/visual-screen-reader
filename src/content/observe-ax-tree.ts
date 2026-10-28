@@ -5,12 +5,48 @@ const DEBOUNCE_MS = 200
 const FOCUS_DEBOUNCE_MS = 25
 
 let debounceTimer: ReturnType<typeof setTimeout> | undefined
+let focusDebounceTimer: ReturnType<typeof setTimeout> | undefined
 let watching = false
+let started = false
+let mutationObserver: MutationObserver | undefined
+let lastFocusedNodeId: string | null | undefined
 
+const MUTATION_OBSERVER_OPTIONS: MutationObserverInit = {
+  subtree: true,
+  childList: true,
+  attributes: true,
+  characterData: true,
+}
+
+/** Fire-and-forget; the background may be restarting, or this script orphaned by an extension reload. */
+function sendToBackground(message: DomAxTreeUpdatedMessage | DomFocusChangedMessage): void {
+  try {
+    void chrome.runtime.sendMessage(message)?.catch(() => {})
+  } catch {
+    // Extension context invalidated.
+  }
+}
+
+/**
+ * Only the active tab of a window with an open side panel is watched. The MutationObserver is
+ * connected just while watching so idle tabs don't pay for observing every DOM change.
+ */
 export function setAxTreeWatching(value: boolean): void {
-  watching = value
-  if (!watching) return
+  if (watching === value) {
+    if (value) scheduleDomAxTreeUpdate()
+    return
+  }
 
+  watching = value
+  if (!watching) {
+    mutationObserver?.disconnect()
+    clearTimeout(debounceTimer)
+    clearTimeout(focusDebounceTimer)
+    lastFocusedNodeId = undefined
+    return
+  }
+
+  if (started) mutationObserver?.observe(document.documentElement, MUTATION_OBSERVER_OPTIONS)
   pushFocusChange(getFocusedAxTreeNodeId())
   scheduleDomAxTreeUpdate()
 }
@@ -22,13 +58,14 @@ function pushDomAxTreeUpdate(): void {
     type: 'DOM_AX_TREE_UPDATED',
     focusedNodeId,
   }
-  void chrome.runtime.sendMessage(message)
+  sendToBackground(message)
 
   // Keep dedup state aligned after positional nodeIds may have changed.
   lastFocusedNodeId = focusedNodeId
 }
 
 function scheduleDomAxTreeUpdate(): void {
+  if (!watching) return
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(pushDomAxTreeUpdate, DEBOUNCE_MS)
 }
@@ -50,17 +87,6 @@ function onFormFieldChange(event: Event): void {
   }
 }
 
-function patchHistoryMethod(method: 'pushState' | 'replaceState'): void {
-  const original = history[method].bind(history)
-  history[method] = (...args: Parameters<History['pushState']>) => {
-    original(...args)
-    onRouteChange()
-  }
-}
-
-let focusDebounceTimer: ReturnType<typeof setTimeout> | undefined
-let lastFocusedNodeId: string | null | undefined
-
 function pushFocusChange(nodeId: string | null): void {
   if (!watching) return
   if (nodeId === lastFocusedNodeId) return
@@ -70,10 +96,11 @@ function pushFocusChange(nodeId: string | null): void {
     type: 'DOM_FOCUS_CHANGED',
     nodeId,
   }
-  void chrome.runtime.sendMessage(message)
+  sendToBackground(message)
 }
 
 function scheduleFocusChange(target: Element): void {
+  if (!watching) return
   clearTimeout(focusDebounceTimer)
   focusDebounceTimer = setTimeout(() => {
     pushFocusChange(getAxTreeNodeIdForElement(target))
@@ -81,6 +108,7 @@ function scheduleFocusChange(target: Element): void {
 }
 
 function scheduleFocusClear(): void {
+  if (!watching) return
   clearTimeout(focusDebounceTimer)
   focusDebounceTimer = setTimeout(() => {
     if (!document.hasFocus()) {
@@ -117,21 +145,19 @@ function onWindowFocus(): void {
 }
 
 export function startAxTreeObserver(): void {
-  const observer = new MutationObserver(() => {
+  if (started) return
+  started = true
+
+  mutationObserver = new MutationObserver(() => {
     scheduleDomAxTreeUpdate()
   })
+  if (watching) mutationObserver.observe(document.documentElement, MUTATION_OBSERVER_OPTIONS)
 
-  observer.observe(document.documentElement, {
-    subtree: true,
-    childList: true,
-    attributes: true,
-    characterData: true,
-  })
-
+  // Content scripts run in an isolated world, so patching `history.pushState` here would never see
+  // the page's own calls. SPA navigations are caught by the Navigation API, DOM mutations, and
+  // `chrome.tabs.onUpdated` URL changes in the background.
   window.addEventListener('popstate', onRouteChange)
   window.addEventListener('hashchange', onRouteChange)
-  patchHistoryMethod('pushState')
-  patchHistoryMethod('replaceState')
 
   const navigation = (window as Window & { navigation?: EventTarget }).navigation
   navigation?.addEventListener('navigate', onRouteChange)
@@ -141,4 +167,32 @@ export function startAxTreeObserver(): void {
   document.addEventListener('change', onFormFieldChange, { capture: true, passive: true })
   window.addEventListener('blur', onWindowBlur)
   window.addEventListener('focus', onWindowFocus)
+}
+
+/** Tear down observers/listeners started by `startAxTreeObserver` (tests + HMR). */
+export function stopAxTreeObserver(): void {
+  if (!started) return
+  started = false
+  watching = false
+  lastFocusedNodeId = undefined
+
+  clearTimeout(debounceTimer)
+  clearTimeout(focusDebounceTimer)
+  debounceTimer = undefined
+  focusDebounceTimer = undefined
+
+  mutationObserver?.disconnect()
+  mutationObserver = undefined
+
+  window.removeEventListener('popstate', onRouteChange)
+  window.removeEventListener('hashchange', onRouteChange)
+
+  const navigation = (window as Window & { navigation?: EventTarget }).navigation
+  navigation?.removeEventListener('navigate', onRouteChange)
+
+  document.removeEventListener('focusin', onFocusIn, { capture: true })
+  document.removeEventListener('input', onFormFieldChange, { capture: true })
+  document.removeEventListener('change', onFormFieldChange, { capture: true })
+  window.removeEventListener('blur', onWindowBlur)
+  window.removeEventListener('focus', onWindowFocus)
 }

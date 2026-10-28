@@ -1,23 +1,49 @@
-import { countAxTreeNodes, type AxTreeNode } from '../shared/ax-tree'
-import type { AxTreePushMessage, BackgroundResponse, ContentResponse } from '../shared/messages'
+import { type AxTreeNode, countAxTreeNodes } from '../shared/ax-tree'
+import type {
+  AxTreeResultMessage,
+  BackgroundResponse,
+  DomAxTreeResultMessage,
+} from '../shared/messages'
 
 export interface TreeCaptureDeps {
-  getActiveTab(): Promise<chrome.tabs.Tab | undefined>
+  getActiveTabInWindow(windowId: number): Promise<chrome.tabs.Tab | undefined>
   getTab(tabId: number): Promise<chrome.tabs.Tab>
-  getDomTreeFromContent(tabId: number): Promise<ContentResponse | null>
+  /** Focused DOM path from the content script; `undefined` when the content script is unreachable. */
+  getFocusFromContent(tabId: number): Promise<string | null | undefined>
+  /** DOM-derived fallback tree; `null` when the content script is unreachable. */
+  getDomTreeFromContent(tabId: number): Promise<DomAxTreeResultMessage | null>
   fetchCdpAxTree(tabId: number): Promise<AxTreeNode[]>
   isWatchingWindow(windowId: number): boolean
   warnCdpFallback(error: string): void
 }
 
 export interface TreeCapture {
-  captureActiveTabAxTree(): Promise<BackgroundResponse>
+  captureActiveTabAxTree(windowId: number): Promise<BackgroundResponse>
   captureTabAxTree(tabId: number, focusedNodeIdOverride?: string | null): Promise<BackgroundResponse>
 }
 
-function canReadTab(tab: chrome.tabs.Tab): boolean {
-  return Boolean(tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://'))
+const RESTRICTED_URL_PREFIXES = [
+  'chrome://',
+  'chrome-extension://',
+  'chrome-search://',
+  'chrome-untrusted://',
+  'devtools://',
+  'edge://',
+  'about:',
+  'view-source:',
+  'https://chrome.google.com/webstore',
+  'https://chromewebstore.google.com',
+]
+
+/** Pages where Chrome blocks both content scripts and `chrome.debugger`. */
+export function canReadTab(tab: chrome.tabs.Tab): boolean {
+  const url = tab.url
+  if (!url) return false
+  return !RESTRICTED_URL_PREFIXES.some((prefix) => url.startsWith(prefix))
 }
+
+const RESTRICTED_PAGE_ERROR = 'Cannot read the accessibility tree on this page. Open a normal web page.'
+const CONTENT_NOT_READY_ERROR = 'Content script not ready. Refresh the page and try again.'
 
 function buildAxTreeResult(
   tab: chrome.tabs.Tab,
@@ -26,7 +52,7 @@ function buildAxTreeResult(
   focusedNodeId: string | null,
   source: 'cdp' | 'dom',
   cdpError?: string,
-): AxTreePushMessage {
+): AxTreeResultMessage {
   return {
     type: 'AX_TREE_RESULT',
     tabId,
@@ -40,65 +66,67 @@ function buildAxTreeResult(
   }
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
 export function createTreeCapture(deps: TreeCaptureDeps): TreeCapture {
+  async function captureDomFallback(
+    tab: chrome.tabs.Tab,
+    tabId: number,
+    focusedNodeIdOverride: string | null | undefined,
+    cdpError?: string,
+  ): Promise<BackgroundResponse> {
+    const domTree = await deps.getDomTreeFromContent(tabId)
+    if (!domTree) {
+      const reason = cdpError ? ` (CDP: ${cdpError})` : ''
+      return { type: 'AX_TREE_ERROR', error: `${CONTENT_NOT_READY_ERROR}${reason}` }
+    }
+
+    const focusedNodeId = focusedNodeIdOverride ?? domTree.focusedNodeId
+    return buildAxTreeResult(tab, tabId, domTree.roots, focusedNodeId, 'dom', cdpError)
+  }
+
   async function captureTabAxTree(
     tabId: number,
     focusedNodeIdOverride?: string | null,
   ): Promise<BackgroundResponse> {
-    const tab = await deps.getTab(tabId)
-
-    if (!canReadTab(tab)) {
-      return {
-        type: 'AX_TREE_ERROR',
-        error: 'Cannot read the accessibility tree on this page. Open a normal web page.',
-      }
-    }
-
     try {
-      const domTree = await deps.getDomTreeFromContent(tabId)
-      if (!domTree) {
-        return {
-          type: 'AX_TREE_ERROR',
-          error: 'Content script not ready. Refresh the page and try again.',
-        }
-      }
+      const tab = await deps.getTab(tabId)
+      if (!canReadTab(tab)) return { type: 'AX_TREE_ERROR', error: RESTRICTED_PAGE_ERROR }
 
-      const focusedNodeId = focusedNodeIdOverride ?? domTree.focusedNodeId
       const canUseCdp = tab.windowId != null && deps.isWatchingWindow(tab.windowId)
+      if (!canUseCdp) return await captureDomFallback(tab, tabId, focusedNodeIdOverride)
 
-      if (!canUseCdp) {
-        return buildAxTreeResult(tab, tabId, domTree.roots, focusedNodeId, 'dom')
+      // Only the focus path is needed from the page when CDP supplies the tree. A missing content
+      // script (e.g. tab opened before install) still yields a CDP tree, just without focus.
+      const [cdpResult, contentFocus] = await Promise.all([
+        deps.fetchCdpAxTree(tabId).then(
+          (roots) => ({ ok: true as const, roots }),
+          (err: unknown) => ({ ok: false as const, error: errorMessage(err) }),
+        ),
+        focusedNodeIdOverride === undefined
+          ? deps.getFocusFromContent(tabId)
+          : Promise.resolve(focusedNodeIdOverride),
+      ])
+
+      if (cdpResult.ok) {
+        const focusedNodeId = focusedNodeIdOverride ?? contentFocus ?? null
+        return buildAxTreeResult(tab, tabId, cdpResult.roots, focusedNodeId, 'cdp')
       }
 
-      try {
-        const roots = await deps.fetchCdpAxTree(tabId)
-        return buildAxTreeResult(tab, tabId, roots, focusedNodeId, 'cdp')
-      } catch (cdpErr) {
-        const cdpError = cdpErr instanceof Error ? cdpErr.message : String(cdpErr)
-        deps.warnCdpFallback(cdpError)
-        return buildAxTreeResult(tab, tabId, domTree.roots, focusedNodeId, 'dom', cdpError)
-      }
+      deps.warnCdpFallback(cdpResult.error)
+      return await captureDomFallback(tab, tabId, focusedNodeIdOverride, cdpResult.error)
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      return {
-        type: 'AX_TREE_ERROR',
-        error: `${message} Try refreshing the page.`,
-      }
+      return { type: 'AX_TREE_ERROR', error: `${errorMessage(err)} Try refreshing the page.` }
     }
   }
 
-  async function captureActiveTabAxTree(): Promise<BackgroundResponse> {
-    const tab = await deps.getActiveTab()
+  async function captureActiveTabAxTree(windowId: number): Promise<BackgroundResponse> {
+    const tab = await deps.getActiveTabInWindow(windowId)
 
-    if (!tab?.id) {
+    if (tab?.id == null) {
       return { type: 'AX_TREE_ERROR', error: 'No active tab in this window.' }
-    }
-
-    if (tab.windowId == null || !deps.isWatchingWindow(tab.windowId)) {
-      return {
-        type: 'AX_TREE_ERROR',
-        error: 'Open the side panel on this tab to capture the accessibility tree.',
-      }
     }
 
     return captureTabAxTree(tab.id)

@@ -180,4 +180,24 @@ describe('reader presentation', () => {
       '<button type="button" disabled>Save &lt;draft&gt;</button>',
     )
   })
+
+  it('prefers the first exact line over a folded-in focus record', () => {
+    const roots: AxTreeNode[] = [
+      {
+        nodeId: 'root',
+        domNodeId: 'body',
+        ignored: false,
+        role: 'generic',
+        children: [
+          { nodeId: 'p1', domNodeId: 'body.0', ignored: false, role: 'paragraph', name: 'One', children: [] },
+          { nodeId: 'p2', domNodeId: 'body.1', ignored: false, role: 'paragraph', name: 'Two', children: [] },
+        ],
+      },
+    ]
+    const flattened = flattenAxTreeForReader(roots)
+
+    expect(flattened.exactLineIndex.get('body.1')).toBe(1)
+    expect(resolveFocusedReaderLineIndex(flattened, 'body.1')).toBe(1)
+    expect(resolveFocusedReaderLineIndex(flattened, 'missing')).toBeUndefined()
+  })
 })

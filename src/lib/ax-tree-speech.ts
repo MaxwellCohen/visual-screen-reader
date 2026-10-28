@@ -223,3 +223,20 @@ export function findAxTreeNode(roots: AxTreeNode[], nodeId: string): AxTreeNode 
   }
   return null
 }
+
+/**
+ * Lookup table for `findAxTreeNode` — build once per tree instead of searching
+ * the whole tree on every focus change. First match in pre-order wins.
+ */
+export function indexAxTreeNodes(roots: AxTreeNode[]): Map<string, AxTreeNode> {
+  const index = new Map<string, AxTreeNode>()
+  const stack = [...roots].reverse()
+  while (stack.length > 0) {
+    const node = stack.pop()!
+    const focusId = getAxTreeFocusId(node)
+    if (!index.has(focusId)) index.set(focusId, node)
+    if (!index.has(node.nodeId)) index.set(node.nodeId, node)
+    for (let i = node.children.length - 1; i >= 0; i--) stack.push(node.children[i]!)
+  }
+  return index
+}

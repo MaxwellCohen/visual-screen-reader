@@ -2,17 +2,12 @@ import type { AxTreeNode } from '../shared/ax-tree'
 import {
   DOM_ROOT_NODE_ID,
   domNodeIdFromPath,
-  IGNORED_DOM_TAGS,
-} from '../shared/dom-link'
-
-const IGNORED_TAGS = IGNORED_DOM_TAGS
-
-function isHidden(el: Element): boolean {
-  if (!(el instanceof HTMLElement)) return false
-  if (el.hidden) return true
-  const style = getComputedStyle(el)
-  return style.display === 'none' || style.visibility === 'hidden'
-}
+  isAriaHiddenTrue,
+  isElementHiddenByAttribute,
+  isExcludedBeforeChildren,
+  shouldIncludeIndexedNode,
+  walkIndexedChildren,
+} from '../shared/dom-indexing'
 
 function getImplicitRole(el: Element): string {
   const tag = el.tagName.toLowerCase()
@@ -200,31 +195,32 @@ function getNodeContent(el: Element): string | undefined {
 
 function walkElement(el: Element, nodeId: string): AxTreeNode | null {
   const tag = el.tagName.toLowerCase()
-  if (IGNORED_TAGS.has(tag) || isHidden(el)) return null
+  const hidden = isElementHiddenByAttribute(el)
+  if (isExcludedBeforeChildren(tag, hidden)) return null
 
-  const children: AxTreeNode[] = []
-  let childIndex = 0
-  for (const child of el.children) {
-    const treeChild = walkElement(child, `${nodeId}.${childIndex}`)
-    childIndex += 1
-    if (treeChild) children.push(treeChild)
-  }
+  const ariaHidden = isAriaHiddenTrue(el.getAttribute('aria-hidden'))
+  const { results: children, hasIncludedChild } = walkIndexedChildren(
+    el.children,
+    nodeId,
+    (child, childNodeId) => walkElement(child, childNodeId),
+  )
+
+  if (!shouldIncludeIndexedNode({ tag, hidden, ariaHidden, hasIncludedChild })) return null
 
   const role = getRole(el)
   const name = getAccessibleName(el)
   const description = getAccessibleDescription(el)
   const content = getNodeContent(el)
-  const textContent = el.textContent?.trim() || undefined
+  // Only leaves use textContent (see getSpeakableLabel); reading it on every
+  // ancestor re-walks each subtree and is quadratic on large pages.
+  const textContent = children.length === 0 ? el.textContent?.trim() || undefined : undefined
   const attributes = getNodeAttributes(el)
   const states = getNodeStates(el)
   const level = role === 'heading' ? getHeadingLevel(el, role) : undefined
-  const ignored = el.getAttribute('aria-hidden') === 'true'
-
-  if (ignored && children.length === 0) return null
 
   return {
     nodeId,
-    ignored,
+    ignored: ariaHidden,
     role,
     name,
     description,
@@ -267,16 +263,14 @@ function nodeIdPathFromBody(el: Element): string | null {
 /** Whether an element would appear in the DOM-derived AX tree (without building it). */
 function elementIncludedInAxTree(el: Element): boolean {
   const tag = el.tagName.toLowerCase()
-  if (IGNORED_TAGS.has(tag) || isHidden(el)) return false
+  if (isExcludedBeforeChildren(tag, isElementHiddenByAttribute(el))) return false
+  // Only aria-hidden elements depend on their descendants; skip the subtree walk otherwise.
+  if (!isAriaHiddenTrue(el.getAttribute('aria-hidden'))) return true
 
-  if (el.getAttribute('aria-hidden') === 'true') {
-    for (const child of el.children) {
-      if (elementIncludedInAxTree(child)) return true
-    }
-    return false
+  for (const child of el.children) {
+    if (elementIncludedInAxTree(child)) return true
   }
-
-  return true
+  return false
 }
 
 /** Nearest ancestor (or self) that appears in the DOM-derived AX tree. */

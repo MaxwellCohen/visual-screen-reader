@@ -44,6 +44,9 @@ export interface ReaderLineItem {
 
 export interface FlattenedReaderTree {
   lines: ReaderLineItem[]
+  /** First line whose own focusId matches (exact hit). */
+  exactLineIndex: Map<string, number>
+  /** Fallback line for focus ids that were folded into another line. */
   focusLineIndex: Map<string, number>
   lineOffsets: number[]
   totalHeight: number
@@ -85,6 +88,7 @@ function buildLineOffsets(lines: ReaderLineItem[]): { lineOffsets: number[]; tot
 
 export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree {
   const lines: ReaderLineItem[] = []
+  const exactLineIndex = new Map<string, number>()
   const focusLineIndex = new Map<string, number>()
 
   function recordFocus(focusId: string, lineIndex: number): void {
@@ -105,6 +109,7 @@ export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree
   ): number {
     const lineIndex = lines.length
     lines.push({ focusId, depth, ...item })
+    if (!exactLineIndex.has(focusId)) exactLineIndex.set(focusId, lineIndex)
     recordFocus(focusId, lineIndex)
     return lineIndex
   }
@@ -258,7 +263,7 @@ export function flattenAxTreeForReader(roots: AxTreeNode[]): FlattenedReaderTree
   for (const root of roots) walk(root, undefined, 0)
 
   const { lineOffsets, totalHeight } = buildLineOffsets(lines)
-  return { lines, focusLineIndex, lineOffsets, totalHeight }
+  return { lines, exactLineIndex, focusLineIndex, lineOffsets, totalHeight }
 }
 
 export function resolveFocusedReaderLineIndex(
@@ -267,10 +272,7 @@ export function resolveFocusedReaderLineIndex(
 ): number | undefined {
   if (!focusedNodeId) return undefined
 
-  const exactIndex = flattened.lines.findIndex((line) => line.focusId === focusedNodeId)
-  if (exactIndex >= 0) return exactIndex
-
-  return flattened.focusLineIndex.get(focusedNodeId)
+  return flattened.exactLineIndex.get(focusedNodeId) ?? flattened.focusLineIndex.get(focusedNodeId)
 }
 
 export function findVisibleLineRange(

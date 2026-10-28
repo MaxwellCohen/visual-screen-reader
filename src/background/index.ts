@@ -1,21 +1,36 @@
 import type {
   ContentRequest,
-  ContentResponse,
+  DomAxTreeResultMessage,
   DomAxTreeUpdatedMessage,
   DomFocusChangedMessage,
+  DomFocusResultMessage,
+  GetAxTreeMessage,
+  SidePanelPushMessage,
 } from '../shared/messages'
-import { detachDebugger, fetchLinkedCdpAxTree, isDebuggerAttached } from './cdp-ax-tree'
+import { parseSidePanelPortName } from '../shared/messages'
+import {
+  detachAllDebuggers,
+  detachDebugger,
+  fetchLinkedCdpAxTree,
+  isDebuggerAttached,
+} from './cdp-ax-tree'
 import { createTreeCapture } from './tree-capture'
 import { createWatchSession, type WatchSession } from './watch-session'
 
+/** Connected side panel ports, keyed by window id. */
+const sidePanelPorts = new Map<number, chrome.runtime.Port>()
+
 let watchSession: WatchSession
 
+async function queryActiveTabInWindow(windowId: number): Promise<chrome.tabs.Tab | undefined> {
+  const [active] = await chrome.tabs.query({ active: true, windowId })
+  return active
+}
+
 const treeCapture = createTreeCapture({
-  async getActiveTab() {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-    return tab
-  },
+  getActiveTabInWindow: queryActiveTabInWindow,
   getTab: (tabId) => chrome.tabs.get(tabId),
+  getFocusFromContent,
   getDomTreeFromContent,
   fetchCdpAxTree: fetchLinkedCdpAxTree,
   isWatchingWindow: (windowId) => watchSession.isWatchingWindow(windowId),
@@ -26,16 +41,17 @@ const treeCapture = createTreeCapture({
 
 watchSession = createWatchSession({
   queryTabsInWindow: (windowId) => chrome.tabs.query({ windowId }),
-  async queryActiveTabInWindow(windowId) {
-    const [active] = await chrome.tabs.query({ active: true, windowId })
-    return active
-  },
+  queryActiveTabInWindow,
   setTabWatching,
   detachDebugger,
   isDebuggerAttached,
   captureTabAxTree: treeCapture.captureTabAxTree,
-  pushMessage(message) {
-    void chrome.runtime.sendMessage(message)
+  pushMessage(windowId, message: SidePanelPushMessage) {
+    try {
+      sidePanelPorts.get(windowId)?.postMessage(message)
+    } catch {
+      // Port disconnected between lookup and post; onDisconnect will clean up.
+    }
   },
 })
 
@@ -44,25 +60,29 @@ chrome.runtime.onInstalled.addListener(() => {
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
 })
 
-chrome.sidePanel.onOpened.addListener((info) => {
-  void watchSession.startWatchingWindow(info.windowId)
+// The side panel holds a port for as long as it is open. Unlike `sidePanel.onOpened/onClosed`
+// (Chrome 141+/142+) this works on every Chrome with side panels, disconnects reliably when the
+// panel closes, and the panel reconnects after a service worker restart to restore watch state.
+chrome.runtime.onConnect.addListener((port) => {
+  const windowId = parseSidePanelPortName(port.name)
+  if (windowId == null) return
+
+  sidePanelPorts.get(windowId)?.disconnect()
+  sidePanelPorts.set(windowId, port)
+  void watchSession.startWatchingWindow(windowId)
+
+  port.onDisconnect.addListener(() => {
+    if (sidePanelPorts.get(windowId) !== port) return
+    sidePanelPorts.delete(windowId)
+    void watchSession.stopWatchingWindow(windowId)
+  })
 })
 
-chrome.sidePanel.onClosed.addListener((info) => {
-  void watchSession.stopWatchingWindow(info.windowId)
+chrome.runtime.onSuspend.addListener(() => {
+  void detachAllDebuggers()
 })
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === 'SIDE_PANEL_OPEN') {
-    void watchSession.startWatchingWindow(message.windowId)
-    return
-  }
-
-  if (message?.type === 'SIDE_PANEL_CLOSE') {
-    void watchSession.stopWatchingWindow(message.windowId)
-    return
-  }
-
   if (message?.type === 'DOM_AX_TREE_UPDATED') {
     const update = message as DomAxTreeUpdatedMessage
     watchSession.handleDomUpdate(sender.tab?.id, sender.tab?.windowId, update.focusedNodeId)
@@ -77,9 +97,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type !== 'GET_AX_TREE') return
 
+  const { windowId } = message as GetAxTreeMessage
   void (async () => {
-    const response = await treeCapture.captureActiveTabAxTree()
-    sendResponse(response)
+    // The request comes from an open panel; its port may not have been processed yet.
+    await watchSession.startWatchingWindow(windowId)
+    sendResponse(await treeCapture.captureActiveTabAxTree(windowId))
   })()
 
   return true
@@ -93,17 +115,25 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   watchSession.handleTabUpdated(tabId, tab.windowId, changeInfo)
 })
 
-async function setTabWatching(tabId: number, watching: boolean): Promise<void> {
+async function sendToContent<T>(tabId: number, request: ContentRequest): Promise<T | undefined> {
   try {
-    await chrome.tabs.sendMessage(tabId, { type: 'SET_WATCHING', watching })
+    return (await chrome.tabs.sendMessage(tabId, request)) as T | undefined
   } catch {
-    // Content script may not be injected on this page yet.
+    // No content script on this page (restricted, still loading, or opened before install).
+    return undefined
   }
 }
 
-async function getDomTreeFromContent(tabId: number): Promise<ContentResponse | null> {
-  const request: ContentRequest = { type: 'GET_AX_TREE' }
-  const response = (await chrome.tabs.sendMessage(tabId, request)) as ContentResponse | undefined
-  if (!response || response.type !== 'DOM_AX_TREE_RESULT') return null
-  return response
+async function setTabWatching(tabId: number, watching: boolean): Promise<void> {
+  await sendToContent(tabId, { type: 'SET_WATCHING', watching })
+}
+
+async function getFocusFromContent(tabId: number): Promise<string | null | undefined> {
+  const response = await sendToContent<DomFocusResultMessage>(tabId, { type: 'GET_DOM_FOCUS' })
+  return response?.type === 'DOM_FOCUS_RESULT' ? response.focusedNodeId : undefined
+}
+
+async function getDomTreeFromContent(tabId: number): Promise<DomAxTreeResultMessage | null> {
+  const response = await sendToContent<DomAxTreeResultMessage>(tabId, { type: 'GET_DOM_AX_TREE' })
+  return response?.type === 'DOM_AX_TREE_RESULT' ? response : null
 }

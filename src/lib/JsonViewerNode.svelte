@@ -7,6 +7,7 @@
     getJsonType,
     getObjectPreview,
     isJsonNodeExpanded,
+    JSON_ENTRY_PAGE_SIZE,
     toggleJsonNode,
     type JsonCollapseState,
   } from './json-viewer'
@@ -34,6 +35,10 @@
     if (jsonType === 'object') return Object.entries(value as Record<string, unknown>)
     return []
   })
+
+  let visibleEntryCount = $state(JSON_ENTRY_PAGE_SIZE)
+  const visibleEntries = $derived(entries.slice(0, visibleEntryCount))
+  const hiddenEntryCount = $derived(entries.length - visibleEntries.length)
 
   const preview = $derived.by(() => {
     if (jsonType === 'array') return getCollectionPreview(value as unknown[])
@@ -74,7 +79,7 @@
       <span class="json-bracket">{closeBracket}</span>
     {:else}
       <div class="json-children">
-        {#each entries as [key, childValue], index (childPath(path, key))}
+        {#each visibleEntries as [key, childValue], index (childPath(path, key))}
           <div class="json-child">
             <JsonViewerNode
               value={childValue}
@@ -86,6 +91,15 @@
             {#if index < entries.length - 1}<span class="json-comma">,</span>{/if}
           </div>
         {/each}
+        {#if hiddenEntryCount > 0}
+          <button
+            type="button"
+            class="json-preview json-more"
+            onclick={() => (visibleEntryCount += JSON_ENTRY_PAGE_SIZE)}
+          >
+            Show {Math.min(hiddenEntryCount, JSON_ENTRY_PAGE_SIZE)} more ({hiddenEntryCount} hidden)
+          </button>
+        {/if}
       </div>
       <span class="json-bracket json-bracket--close">{closeBracket}</span>
     {/if}
@@ -134,6 +148,10 @@
   .json-preview:hover {
     background: color-mix(in srgb, var(--text) 14%, transparent);
     color: var(--text-h);
+  }
+
+  .json-more {
+    margin-left: 0;
   }
 
   .json-key {

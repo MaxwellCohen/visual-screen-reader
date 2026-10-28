@@ -7,10 +7,11 @@ Built with **Svelte 5**, **TypeScript**, and **Vite**, using [@crxjs/vite-plugin
 ## Features
 
 - **Browser AX tree via CDP** — captures the real accessibility tree from Chrome (`Accessibility.getFullAXTree`), not a DOM approximation
-- **DOM-linked focus** — content script stamps stable DOM paths on elements; CDP nodes are linked via `backendDOMNodeId` so focus tracking matches the page
+- **DOM-linked focus** — content script and CDP linker share a body-relative path scheme (`body.0.1…`); CDP nodes are linked via `backendDOMNodeId` so focus tracking matches the page
 - **Screen reader view** — readable, speech-oriented rendering of the tree (landmarks, headings, links, etc.)
 - **Raw JSON** — full tree payload for debugging
-- **Live updates** — DOM observers and focus listeners trigger CDP re-capture when the page changes, focus moves, the active tab switches, or the page navigates (including `pushState` / `replaceState`)
+- **Live updates** — DOM observers and focus listeners trigger CDP re-capture when the page changes, focus moves, the active tab switches, or the page navigates (including SPA `pushState` / `replaceState` routes, via `tabs.onUpdated` and the Navigation API). Captures are debounced and throttled to roughly the time the previous capture took, so busy pages can't monopolise CDP.
+- **Per-window panels** — each window's side panel only receives updates for that window's active tab
 - **Focus tracking** — highlights the focused element and scrolls it into view in the tree
 
 ## Usage
@@ -31,18 +32,19 @@ Built with **Svelte 5**, **TypeScript**, and **Vite**, using [@crxjs/vite-plugin
                                          │                                                │
                                          │  chrome.debugger (CDP)                         │
                                          │  Accessibility.getFullAXTree                   │
-                                         │  DOM.getFlattenedDocument (link to DOM)        │
+                                         │  DOM.getDocument (pierce, link to DOM)         │
                                          │                                                │
                                          │  debounced push on tab/DOM/focus changes       │
                                          │  MutationObserver + focus listeners            │
-                                         │  compute body-relative paths via CDP DOM tree    │
+                                         │  compute body-relative paths via CDP DOM tree  │
                                          └────────────────────────────────────────────────┘
 ```
 
-1. The **content script** watches the DOM (mutations, focus, navigation) and reports focus using stable body-relative node paths.
-2. On each update trigger, the **service worker** attaches the debugger, fetches the CDP accessibility tree, and links nodes to those paths via `backendDOMNodeId` and `DOM.getDocument` (without mutating the page DOM).
-3. The **side panel** renders the CDP tree (screen-reader-style or JSON) and highlights focus using the linked DOM node ids.
-4. If CDP capture fails (e.g. another debugger is attached), the extension falls back to a DOM-derived tree.
+1. The **side panel** opens a long-lived port (`sidepanel:<windowId>`) to the service worker. The port scopes live pushes to that window, its disconnect signals that the panel closed, and the panel reconnects automatically if Chrome stops the idle service worker.
+2. The **content script** of the watched tab (only the active tab of a window with an open panel) watches the DOM (mutations, focus, navigation) and reports focus using stable body-relative node paths. Other tabs don't run a MutationObserver.
+3. On each update trigger, the **service worker** attaches the debugger, fetches the CDP accessibility tree, and links nodes to those paths via `backendDOMNodeId` and `DOM.getDocument` (without mutating the page DOM). It only asks the content script for the focused path, not a whole tree.
+4. The **side panel** renders the CDP tree (screen-reader-style or JSON) and highlights focus using the linked DOM node ids.
+5. If CDP capture fails (e.g. another debugger is attached), the service worker asks the content script for a DOM-derived fallback tree. If the content script is missing (e.g. a tab opened before the extension was installed), CDP still works, just without focus tracking until the page is reloaded.
 
 ## Project layout
 
@@ -50,12 +52,22 @@ Built with **Svelte 5**, **TypeScript**, and **Vite**, using [@crxjs/vite-plugin
 |------|------|
 | `manifest.config.ts` | Extension manifest (side panel, content scripts, permissions) |
 | `src/sidepanel/` | Chrome side panel UI (Svelte) |
-| `src/content/` | Content script — DOM observers, node-id stamping, focus tracking |
+| `src/content/` | Content script — DOM observers, focus tracking, DOM AX fallback |
 | `src/background/` | MV3 service worker — CDP capture, tab routing, message handling |
 | `src/background/cdp-ax-tree.ts` | CDP debugger attach, AX tree fetch, DOM linking |
-| `src/shared/` | Shared types (`AxTreeNode`, message contracts) |
+| `src/shared/` | Shared types (`AxTreeNode`, message contracts, DOM indexing) |
 | `src/lib/` | Tree rendering and speech-oriented presentation |
 | `public/` | Static assets referenced from the manifest |
+
+## Install a prebuilt version
+
+1. Download `visual-screen-reader.zip` from the [latest build](https://github.com/MaxwellCohen/visual-screen-reader/releases/tag/latest) (rebuilt on every push to `main`) or from a [versioned release](https://github.com/MaxwellCohen/visual-screen-reader/releases).
+2. Unzip it.
+3. Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select the unzipped folder.
+
+To update, replace the folder's contents with a newer zip and click **Reload** on the extension card.
+
+To cut a versioned release, push a tag: `git tag v0.1.0 && git push origin v0.1.0`.
 
 ## Development
 
@@ -79,17 +91,20 @@ pnpm build
 
 Load the `dist` folder the same way as in development.
 
-## Typecheck
+## Typecheck / lint / test
 
 ```bash
 pnpm check
+pnpm lint
+pnpm test
 ```
 
 ## Limitations
 
 - Attaching the debugger shows Chrome’s “being controlled by automated test software” banner and conflicts with DevTools on the same tab.
 - Cannot run on restricted URLs (`chrome://`, `chrome-extension://`, etc.).
-- Content script runs in the top frame only (`all_frames: false`).
+- Content script runs in the **top frame only** (`all_frames: false`) and walks the light DOM — shadow roots and iframes are not indexed by the content-script path builder (CDP may still see them via `pierce: true`).
+- Path indexing treats only the HTML `hidden` attribute (and ignored tags / empty `aria-hidden` subtrees) as excluded — CSS `display:none` / `visibility:hidden` alone do not change paths, so DOM and CDP path schemes stay aligned.
 - After installing or updating, refresh open tabs so the content script is injected.
 
 ## IDE

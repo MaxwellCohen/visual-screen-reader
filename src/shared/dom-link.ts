@@ -1,19 +1,23 @@
 import type { AxTreeNode } from './ax-tree'
+import {
+  DOM_ROOT_NODE_ID,
+  isAriaHiddenTrue,
+  isExcludedBeforeChildren,
+  shouldIncludeIndexedNode,
+  walkIndexedChildren,
+} from './dom-indexing'
 
-export const DOM_ROOT_NODE_ID = 'body'
-
-export const IGNORED_DOM_TAGS = new Set([
-  'script',
-  'style',
-  'noscript',
-  'template',
-  'link',
-  'meta',
-  'head',
-])
+export {
+  childDomNodeId,
+  DOM_ROOT_NODE_ID,
+  domNodeIdFromPath,
+  IGNORED_DOM_TAGS,
+} from './dom-indexing'
 
 export interface CdpDomNodeLike {
   backendNodeId?: number
+  /** DOM node type (1 = element). CDP children include text and comment nodes. */
+  nodeType?: number
   localName?: string
   attributes?: string[]
   children?: CdpDomNodeLike[]
@@ -22,16 +26,6 @@ export interface CdpDomNodeLike {
 export interface BackendDomLinkInfo {
   domNodeIds: Map<number, string>
   tagNames: Map<number, string>
-}
-
-export function childDomNodeId(parentNodeId: string, childIndex: number): string {
-  return `${parentNodeId}.${childIndex}`
-}
-
-export function domNodeIdFromPath(pathFromBody: number[]): string {
-  return pathFromBody.length === 0
-    ? DOM_ROOT_NODE_ID
-    : `${DOM_ROOT_NODE_ID}.${pathFromBody.join('.')}`
 }
 
 export function getAxTreeFocusId(node: Pick<AxTreeNode, 'domNodeId' | 'nodeId'>): string {
@@ -45,14 +39,31 @@ export function readCdpDomAttribute(
   if (!attributes) return undefined
 
   for (let i = 0; i < attributes.length - 1; i += 2) {
-    if (attributes[i] === name && attributes[i + 1]) return attributes[i + 1]
+    if (attributes[i] === name && attributes[i + 1] != null) return attributes[i + 1]
   }
 
   return undefined
 }
 
+export function hasCdpDomAttribute(attributes: string[] | undefined, name: string): boolean {
+  if (!attributes) return false
+
+  for (let i = 0; i < attributes.length - 1; i += 2) {
+    if (attributes[i] === name) return true
+  }
+
+  return false
+}
+
+const ELEMENT_NODE = 1
+
+/** CDP lists text/comment children too; the content script only indexes `Element.children`. */
+function isCdpElementNode(node: CdpDomNodeLike): boolean {
+  return (node.nodeType ?? ELEMENT_NODE) === ELEMENT_NODE && Boolean(node.localName)
+}
+
 function isHiddenCdpDomNode(node: CdpDomNodeLike): boolean {
-  return readCdpDomAttribute(node.attributes, 'hidden') != null
+  return hasCdpDomAttribute(node.attributes, 'hidden')
 }
 
 /** Assign stable body-relative paths to CDP backend node ids (mirrors content-script tree indexing). */
@@ -62,19 +73,17 @@ function linkDomNodeIdsFromNode(
   info: BackendDomLinkInfo,
 ): boolean {
   const tag = (node.localName ?? '').toLowerCase()
-  if (IGNORED_DOM_TAGS.has(tag) || isHiddenCdpDomNode(node)) return false
+  const hidden = isHiddenCdpDomNode(node)
+  if (isExcludedBeforeChildren(tag, hidden)) return false
 
-  const ignored = readCdpDomAttribute(node.attributes, 'aria-hidden') === 'true'
-  let hasIncludedChild = false
-  let childIndex = 0
+  const ariaHidden = isAriaHiddenTrue(readCdpDomAttribute(node.attributes, 'aria-hidden'))
+  const { hasIncludedChild } = walkIndexedChildren(
+    (node.children ?? []).filter(isCdpElementNode),
+    nodeId,
+    (child, childNodeId) => (linkDomNodeIdsFromNode(child, childNodeId, info) ? true : null),
+  )
 
-  for (const child of node.children ?? []) {
-    const childNodeId = childDomNodeId(nodeId, childIndex)
-    childIndex += 1
-    if (linkDomNodeIdsFromNode(child, childNodeId, info)) hasIncludedChild = true
-  }
-
-  if (ignored && !hasIncludedChild) return false
+  if (!shouldIncludeIndexedNode({ tag, hidden, ariaHidden, hasIncludedChild })) return false
 
   if (node.backendNodeId != null) {
     info.domNodeIds.set(node.backendNodeId, nodeId)

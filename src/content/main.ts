@@ -1,7 +1,7 @@
-import { buildDomAxTree, getFocusedAxTreeNodeId } from './build-dom-ax-tree'
 import { countAxTreeNodes } from '../shared/ax-tree'
+import type { DomAxTreeResultMessage, DomFocusResultMessage } from '../shared/messages'
+import { buildDomAxTree, getFocusedAxTreeNodeId } from './build-dom-ax-tree'
 import { setAxTreeWatching, startAxTreeObserver } from './observe-ax-tree'
-import type { DomAxTreeResultMessage } from '../shared/messages'
 
 if (window === window.top) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -10,7 +10,16 @@ if (window === window.top) {
       return
     }
 
-    if (message?.type !== 'GET_AX_TREE') return
+    if (message?.type === 'GET_DOM_FOCUS') {
+      const response: DomFocusResultMessage = {
+        type: 'DOM_FOCUS_RESULT',
+        focusedNodeId: getFocusedAxTreeNodeId(),
+      }
+      sendResponse(response)
+      return
+    }
+
+    if (message?.type !== 'GET_DOM_AX_TREE') return
 
     const roots = buildDomAxTree()
     const response: DomAxTreeResultMessage = {
@@ -20,7 +29,6 @@ if (window === window.top) {
       focusedNodeId: getFocusedAxTreeNodeId(),
     }
     sendResponse(response)
-    return true
   })
 
   startAxTreeObserver()

@@ -4,12 +4,13 @@
   import { axTreeToJsonString } from '../lib/flatten-ax-tree-json'
   import AxTreeReaderView from '../lib/AxTreeReaderView.svelte'
   import type { AxTreeNode } from '../shared/ax-tree'
-  import { findAxTreeNode, getSpeakableLabel } from '../lib/ax-tree-speech'
-  import type {
-    AxTreeErrorMessage,
-    AxTreeFocusMessage,
-    AxTreePushMessage,
-    BackgroundResponse,
+  import { getSpeakableLabel, indexAxTreeNodes } from '../lib/ax-tree-speech'
+  import {
+    sidePanelPortName,
+    type AxTreeResultMessage,
+    type BackgroundResponse,
+    type GetAxTreeMessage,
+    type SidePanelPushMessage,
   } from '../shared/messages'
 
   let loading = $state(false)
@@ -18,7 +19,9 @@
   let tabTitle = $state('')
   let url = $state('')
   let tabId = $state<number | null>(null)
-  let roots = $state<AxTreeNode[] | null>(null)
+  // Raw (non-proxied) state: trees can have tens of thousands of nodes and are
+  // replaced wholesale on each capture, never mutated in place.
+  let roots = $state.raw<AxTreeNode[] | null>(null)
   let nodeCount = $state(0)
   let focusedNodeId = $state<string | null>(null)
   let source = $state<'cdp' | 'dom' | null>(null)
@@ -27,8 +30,9 @@
   let copyFeedback = $state<string | null>(null)
   let readerView: { getHtml: () => string } | undefined = $state()
   let copyFeedbackTimeout: ReturnType<typeof setTimeout> | undefined
-  let readerRoots = $state<AxTreeNode[] | null>(null)
+  let readerRoots = $state.raw<AxTreeNode[] | null>(null)
   let readerFocusedNodeId = $state<string | null>(null)
+  let windowId: number | null = null
 
   $effect(() => {
     if (view !== 'tree' || !roots) return
@@ -45,8 +49,9 @@
     source === 'cdp' ? 'browser AX tree (CDP)' : source === 'dom' ? 'DOM fallback' : '',
   )
 
+  const nodeIndex = $derived(roots ? indexAxTreeNodes(roots) : null)
   const focusedNode = $derived(
-    roots && focusedNodeId ? findAxTreeNode(roots, focusedNodeId) : null,
+    nodeIndex && focusedNodeId ? (nodeIndex.get(focusedNodeId) ?? null) : null,
   )
   const focusedLabel = $derived(
     focusedNode ? getSpeakableLabel(focusedNode) ?? focusedNode.role ?? 'Element' : null,
@@ -98,7 +103,7 @@
     }
   }
 
-  function applyAxTreeResult(response: AxTreePushMessage): void {
+  function applyAxTreeResult(response: AxTreeResultMessage): void {
     tabId = response.tabId
     tabTitle = response.tabTitle
     url = response.url
@@ -112,21 +117,47 @@
     if (view === 'tree') syncReaderSnapshot()
   }
 
+  function applyAxTreeError(message: string): void {
+    error = message
+    tabId = null
+    roots = null
+    readerRoots = null
+    nodeCount = 0
+    focusedNodeId = null
+    source = null
+    cdpError = null
+  }
+
+  function handlePush(message: SidePanelPushMessage): void {
+    if (message.type === 'AX_TREE_RESULT') {
+      applyAxTreeResult(message)
+      return
+    }
+
+    if (message.type === 'AX_TREE_FOCUS') {
+      if (tabId != null && message.tabId !== tabId) return
+      focusedNodeId = message.nodeId
+      if (view === 'tree') readerFocusedNodeId = message.nodeId
+      return
+    }
+
+    applyAxTreeError(message.error)
+  }
+
   async function captureTree(options: { silent?: boolean } = {}) {
     const { silent = false } = options
 
+    if (windowId == null) return
+
+    // Keep the current tree on screen while refreshing so the view doesn't flash or lose scroll.
     if (!silent) {
       loading = true
       error = null
-      roots = null
-      nodeCount = 0
-      focusedNodeId = null
     }
 
     try {
-      const response = (await chrome.runtime.sendMessage({
-        type: 'GET_AX_TREE',
-      })) as BackgroundResponse | undefined
+      const request: GetAxTreeMessage = { type: 'GET_AX_TREE', windowId }
+      const response = (await chrome.runtime.sendMessage(request)) as BackgroundResponse | undefined
 
       if (!response) {
         if (!silent) error = 'No response from the extension background.'
@@ -134,7 +165,7 @@
       }
 
       if (response.type === 'AX_TREE_ERROR') {
-        if (!silent) error = response.error
+        if (!silent) applyAxTreeError(response.error)
         return
       }
 
@@ -147,51 +178,41 @@
   }
 
   onMount(() => {
-    let windowId: number | undefined
+    let port: chrome.runtime.Port | undefined
+    let disposed = false
+
+    // The port tells the background this window's panel is open and carries its live pushes.
+    // It drops when the service worker is stopped; reconnecting wakes it and restores watching.
+    function connect(): void {
+      if (disposed || windowId == null) return
+      try {
+        port = chrome.runtime.connect({ name: sidePanelPortName(windowId) })
+      } catch {
+        error = 'Extension was reloaded. Close and reopen the side panel.'
+        live = false
+        return
+      }
+      port.onMessage.addListener((message: SidePanelPushMessage) => handlePush(message))
+      port.onDisconnect.addListener(() => {
+        port = undefined
+        if (disposed) return
+        connect()
+        void captureTree({ silent: true })
+      })
+    }
 
     void (async () => {
       const win = await chrome.windows.getCurrent()
+      if (win.id == null || disposed) return
       windowId = win.id
-      if (windowId == null) return
-
-      await chrome.runtime.sendMessage({ type: 'SIDE_PANEL_OPEN', windowId })
+      connect()
       await captureTree()
     })()
 
-    const onMessage = (message: unknown) => {
-      if (!message || typeof message !== 'object') return
-      const typed = message as { type?: string }
-
-      if (typed.type === 'AX_TREE_RESULT') {
-        applyAxTreeResult(message as AxTreePushMessage)
-        return
-      }
-
-      if (typed.type === 'AX_TREE_FOCUS') {
-        const focus = message as AxTreeFocusMessage
-        if (tabId != null && focus.tabId !== tabId) return
-        focusedNodeId = focus.nodeId
-        if (view === 'tree') readerFocusedNodeId = focus.nodeId
-        return
-      }
-
-      if (typed.type === 'AX_TREE_ERROR') {
-        error = (message as AxTreeErrorMessage).error
-        roots = null
-        nodeCount = 0
-        focusedNodeId = null
-        live = true
-      }
-    }
-
-    chrome.runtime.onMessage.addListener(onMessage)
-
     return () => {
+      disposed = true
       if (copyFeedbackTimeout) clearTimeout(copyFeedbackTimeout)
-      chrome.runtime.onMessage.removeListener(onMessage)
-      if (windowId != null) {
-        void chrome.runtime.sendMessage({ type: 'SIDE_PANEL_CLOSE', windowId })
-      }
+      port?.disconnect()
     }
   })
 </script>
@@ -237,6 +258,7 @@
           <button
             type="button"
             class:active={view === 'tree'}
+            aria-pressed={view === 'tree'}
             onclick={() => {
               view = 'tree'
               copyFeedback = null
@@ -248,6 +270,7 @@
           <button
             type="button"
             class:active={view === 'raw'}
+            aria-pressed={view === 'raw'}
             onclick={() => {
               view = 'raw'
               copyFeedback = null
