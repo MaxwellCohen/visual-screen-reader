@@ -8,6 +8,9 @@ import { buildAxTree, type AxNode } from './cdp-ax-adapter'
 
 const CDP_PROTOCOL = '1.3'
 
+/** `chrome.debugger` only exists in Chromium; Firefox falls back to the DOM-derived tree. */
+export const hasCdp = typeof chrome !== 'undefined' && chrome.debugger != null
+
 const attachedTabs = new Set<number>()
 const accessibilityEnabledTabs = new Set<number>()
 
@@ -206,10 +209,12 @@ export async function fetchLinkedCdpAxTree(tabId: number): Promise<AxTreeNode[]>
   return buildAxTree(axNodes, backendToDomNodeId, backendToTagName)
 }
 
-chrome.debugger.onDetach.addListener((source, reason) => {
-  if (source.tabId != null) {
-    attachedTabs.delete(source.tabId)
-    accessibilityEnabledTabs.delete(source.tabId)
-  }
-  console.debug('[visual-screen-reader] debugger detached', source.tabId, reason)
-})
+if (hasCdp) {
+  chrome.debugger.onDetach.addListener((source, reason) => {
+    if (source.tabId != null) {
+      attachedTabs.delete(source.tabId)
+      accessibilityEnabledTabs.delete(source.tabId)
+    }
+    console.debug('[visual-screen-reader] debugger detached', source.tabId, reason)
+  })
+}

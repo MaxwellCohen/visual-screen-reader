@@ -12,6 +12,7 @@ import {
   detachAllDebuggers,
   detachDebugger,
   fetchLinkedCdpAxTree,
+  hasCdp,
   isDebuggerAttached,
 } from './cdp-ax-tree'
 import { createTreeCapture } from './tree-capture'
@@ -32,7 +33,7 @@ const treeCapture = createTreeCapture({
   getTab: (tabId) => chrome.tabs.get(tabId),
   getFocusFromContent,
   getDomTreeFromContent,
-  fetchCdpAxTree: fetchLinkedCdpAxTree,
+  fetchCdpAxTree: hasCdp ? fetchLinkedCdpAxTree : undefined,
   isWatchingWindow: (windowId) => watchSession.isWatchingWindow(windowId),
   warnCdpFallback(error) {
     console.warn('[visual-screen-reader] CDP capture failed, using DOM fallback:', error)
@@ -55,10 +56,25 @@ watchSession = createWatchSession({
   },
 })
 
+/** Firefox's sidebar API (not in `@types/chrome`). */
+interface SidebarActionApi {
+  toggle(): Promise<void>
+}
+
+const sidebarAction = (globalThis as { browser?: { sidebarAction?: SidebarActionApi } }).browser
+  ?.sidebarAction
+
 chrome.runtime.onInstalled.addListener(() => {
   console.debug('[visual-screen-reader] extension installed')
-  void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
+  void chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true })
 })
+
+// Firefox: the toolbar button toggles the sidebar (must be called synchronously in the click handler).
+if (sidebarAction) {
+  chrome.action.onClicked.addListener(() => {
+    void sidebarAction.toggle()
+  })
+}
 
 // The side panel holds a port for as long as it is open. Unlike `sidePanel.onOpened/onClosed`
 // (Chrome 141+/142+) this works on every Chrome with side panels, disconnects reliably when the

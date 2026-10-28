@@ -12,7 +12,8 @@ export interface TreeCaptureDeps {
   getFocusFromContent(tabId: number): Promise<string | null | undefined>
   /** DOM-derived fallback tree; `null` when the content script is unreachable. */
   getDomTreeFromContent(tabId: number): Promise<DomAxTreeResultMessage | null>
-  fetchCdpAxTree(tabId: number): Promise<AxTreeNode[]>
+  /** Browser AX tree via CDP; omitted where `chrome.debugger` is unavailable (Firefox). */
+  fetchCdpAxTree?(tabId: number): Promise<AxTreeNode[]>
   isWatchingWindow(windowId: number): boolean
   warnCdpFallback(error: string): void
 }
@@ -33,9 +34,13 @@ const RESTRICTED_URL_PREFIXES = [
   'view-source:',
   'https://chrome.google.com/webstore',
   'https://chromewebstore.google.com',
+  'moz-extension://',
+  'resource://',
+  'https://addons.mozilla.org',
+  'https://accounts-static.cdn.mozilla.net',
 ]
 
-/** Pages where Chrome blocks both content scripts and `chrome.debugger`. */
+/** Pages where the browser blocks content scripts (and, in Chrome, `chrome.debugger`). */
 export function canReadTab(tab: chrome.tabs.Tab): boolean {
   const url = tab.url
   if (!url) return false
@@ -95,13 +100,15 @@ export function createTreeCapture(deps: TreeCaptureDeps): TreeCapture {
       const tab = await deps.getTab(tabId)
       if (!canReadTab(tab)) return { type: 'AX_TREE_ERROR', error: RESTRICTED_PAGE_ERROR }
 
-      const canUseCdp = tab.windowId != null && deps.isWatchingWindow(tab.windowId)
+      const { fetchCdpAxTree } = deps
+      const canUseCdp =
+        fetchCdpAxTree != null && tab.windowId != null && deps.isWatchingWindow(tab.windowId)
       if (!canUseCdp) return await captureDomFallback(tab, tabId, focusedNodeIdOverride)
 
       // Only the focus path is needed from the page when CDP supplies the tree. A missing content
       // script (e.g. tab opened before install) still yields a CDP tree, just without focus.
       const [cdpResult, contentFocus] = await Promise.all([
-        deps.fetchCdpAxTree(tabId).then(
+        fetchCdpAxTree(tabId).then(
           (roots) => ({ ok: true as const, roots }),
           (err: unknown) => ({ ok: false as const, error: errorMessage(err) }),
         ),

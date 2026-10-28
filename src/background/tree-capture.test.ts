@@ -127,6 +127,16 @@ describe('Tree Capture', () => {
     expect(deps.fetchCdpAxTree).not.toHaveBeenCalled()
   })
 
+  it('uses the DOM tree without a CDP error when CDP is unavailable (Firefox)', async () => {
+    const deps = makeDeps({ fetchCdpAxTree: undefined })
+    const capture = createTreeCapture(deps)
+
+    const result = await capture.captureTabAxTree(7)
+    expect(result).toMatchObject({ source: 'dom', roots: [domRoot], focusedNodeId: 'body' })
+    expect(result).not.toHaveProperty('cdpError', expect.anything())
+    expect(deps.warnCdpFallback).not.toHaveBeenCalled()
+  })
+
   it('captures the active tab of the requested window', async () => {
     const deps = makeDeps()
     const capture = createTreeCapture(deps)
@@ -159,6 +169,8 @@ describe('Tree Capture', () => {
     ['about:blank', false],
     ['view-source:https://example.com', false],
     ['https://chromewebstore.google.com/detail/x', false],
+    ['moz-extension://abc/page.html', false],
+    ['https://addons.mozilla.org/en-US/firefox/', false],
     [undefined, false],
   ])('canReadTab(%s) is %s', (url, expected) => {
     expect(canReadTab({ url } as chrome.tabs.Tab)).toBe(expected)
