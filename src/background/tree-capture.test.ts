@@ -39,6 +39,7 @@ function makeDeps(overrides: Partial<TreeCaptureDeps> = {}): TreeCaptureDeps {
     getDomTreeFromContent: vi.fn(async () => domTree),
     fetchCdpAxTree: vi.fn(async () => [cdpRoot]),
     isWatchingWindow: vi.fn(() => true),
+    isCdpEnabled: vi.fn(async () => true),
     warnCdpFallback: vi.fn(),
     ...overrides,
   }

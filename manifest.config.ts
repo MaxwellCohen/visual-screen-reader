@@ -11,16 +11,16 @@ const shared = {
   description: 'Visual screen reader side panel for web pages',
   version: '0.0.1',
   icons: {
-    16: 'public/favicon.svg',
-    32: 'public/favicon.svg',
-    48: 'public/favicon.svg',
-    128: 'public/favicon.svg',
+    16: 'public/icons/icon-16.png',
+    32: 'public/icons/icon-32.png',
+    48: 'public/icons/icon-48.png',
+    128: 'public/icons/icon-128.png',
   },
   action: {
     default_title: 'Visual Screen Reader',
     default_icon: {
-      16: 'public/favicon.svg',
-      32: 'public/favicon.svg',
+      16: 'public/icons/icon-16.png',
+      32: 'public/icons/icon-32.png',
     },
   },
   host_permissions: ['<all_urls>'],
@@ -40,7 +40,7 @@ const chromeManifest = defineManifest({
   side_panel: {
     default_path: PANEL_PATH,
   },
-  permissions: ['sidePanel', 'tabs', 'debugger'],
+  permissions: ['sidePanel', 'tabs', 'debugger', 'storage'],
   background: {
     service_worker: BACKGROUND_PATH,
     type: 'module',
@@ -54,7 +54,7 @@ const firefoxManifest = defineManifest({
   sidebar_action: {
     default_title: 'Visual Screen Reader',
     default_panel: PANEL_PATH,
-    default_icon: 'public/favicon.svg',
+    default_icon: 'public/icons/icon-32.png',
     open_at_install: false,
   },
   permissions: ['tabs'],

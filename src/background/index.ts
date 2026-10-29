@@ -7,7 +7,7 @@ import type {
   GetAxTreeMessage,
   SidePanelPushMessage,
 } from '../shared/messages'
-import { parseSidePanelPortName } from '../shared/messages'
+import { parseSidePanelPortName, USE_CDP_KEY } from '../shared/messages'
 import {
   detachAllDebuggers,
   detachDebugger,
@@ -34,6 +34,7 @@ const treeCapture = createTreeCapture({
   getFocusFromContent,
   getDomTreeFromContent,
   fetchCdpAxTree: hasCdp ? fetchLinkedCdpAxTree : undefined,
+  isCdpEnabled: async () => (await chrome.storage.local.get(USE_CDP_KEY))[USE_CDP_KEY] === true,
   isWatchingWindow: (windowId) => watchSession.isWatchingWindow(windowId),
   warnCdpFallback(error) {
     console.warn('[visual-screen-reader] CDP capture failed, using DOM fallback:', error)
@@ -92,6 +93,12 @@ chrome.runtime.onConnect.addListener((port) => {
     sidePanelPorts.delete(windowId)
     void watchSession.stopWatchingWindow(windowId)
   })
+})
+
+chrome.storage?.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[USE_CDP_KEY] && changes[USE_CDP_KEY].newValue !== true) {
+    void detachAllDebuggers()
+  }
 })
 
 chrome.runtime.onSuspend.addListener(() => {

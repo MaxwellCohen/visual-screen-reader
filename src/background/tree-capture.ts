@@ -14,6 +14,8 @@ export interface TreeCaptureDeps {
   getDomTreeFromContent(tabId: number): Promise<DomAxTreeResultMessage | null>
   /** Browser AX tree via CDP; omitted where `chrome.debugger` is unavailable (Firefox). */
   fetchCdpAxTree?(tabId: number): Promise<AxTreeNode[]>
+  /** User setting: use CDP (shows Chrome's debugging banner). Defaults to off when omitted. */
+  isCdpEnabled?(): Promise<boolean>
   isWatchingWindow(windowId: number): boolean
   warnCdpFallback(error: string): void
 }
@@ -102,7 +104,10 @@ export function createTreeCapture(deps: TreeCaptureDeps): TreeCapture {
 
       const { fetchCdpAxTree } = deps
       const canUseCdp =
-        fetchCdpAxTree != null && tab.windowId != null && deps.isWatchingWindow(tab.windowId)
+        fetchCdpAxTree != null &&
+        tab.windowId != null &&
+        deps.isWatchingWindow(tab.windowId) &&
+        (await deps.isCdpEnabled?.()) === true
       if (!canUseCdp) return await captureDomFallback(tab, tabId, focusedNodeIdOverride)
 
       // Only the focus path is needed from the page when CDP supplies the tree. A missing content

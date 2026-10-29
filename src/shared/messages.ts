@@ -41,6 +41,9 @@ export type SetWatchingMessage = { type: 'SET_WATCHING'; watching: boolean }
  */
 export const SIDE_PANEL_PORT_PREFIX = 'sidepanel:'
 
+/** chrome.storage.local key: use CDP when true (default off, DOM-only). */
+export const USE_CDP_KEY = 'useCdp'
+
 export function sidePanelPortName(windowId: number): string {
   return `${SIDE_PANEL_PORT_PREFIX}${windowId}`
 }

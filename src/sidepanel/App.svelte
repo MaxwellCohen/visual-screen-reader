@@ -7,6 +7,7 @@
   import { getSpeakableLabel, indexAxTreeNodes } from '../lib/ax-tree-speech'
   import {
     sidePanelPortName,
+    USE_CDP_KEY,
     type AxTreeResultMessage,
     type BackgroundResponse,
     type GetAxTreeMessage,
@@ -33,6 +34,14 @@
   let readerRoots = $state.raw<AxTreeNode[] | null>(null)
   let readerFocusedNodeId = $state<string | null>(null)
   let windowId: number | null = null
+  const cdpSupported = chrome.runtime.getManifest().permissions?.includes('debugger') ?? false
+  let useCdp = $state(false)
+
+  async function setUseCdp(value: boolean): Promise<void> {
+    useCdp = value
+    await chrome.storage.local.set({ [USE_CDP_KEY]: value })
+    await captureTree()
+  }
 
   $effect(() => {
     if (view !== 'tree' || !roots) return
@@ -205,6 +214,7 @@
       const win = await chrome.windows.getCurrent()
       if (win.id == null || disposed) return
       windowId = win.id
+      if (cdpSupported) useCdp = (await chrome.storage.local.get(USE_CDP_KEY))[USE_CDP_KEY] === true
       connect()
       await captureTree()
     })()
@@ -233,14 +243,15 @@
       </div>
     </div>
 
-    {#if error}
-      <p class="error" role="alert">{error}</p>
+    {#if cdpSupported}
+      <label class="cdp-toggle" title="CDP is more accurate but makes Chrome show a 'started debugging this browser' bar">
+        <input type="checkbox" checked={useCdp} onchange={(e) => setUseCdp(e.currentTarget.checked)} />
+        Use browser AX tree (CDP)
+      </label>
     {/if}
 
-    {#if cdpError}
-      <p class="warn" role="status">
-        CDP unavailable — DOM fallback. {cdpError}
-      </p>
+    {#if error}
+      <p class="error" role="alert">{error}</p>
     {/if}
 
     {#if roots}
@@ -397,15 +408,13 @@
     margin: 0.25rem 0 0;
   }
 
-  .warn {
-    color: #8a5a00;
-    background: #fff8e6;
-    border: 1px solid #e6c200;
-    border-radius: 3px;
-    font-size: 0.6875rem;
-    padding: 0.25rem 0.4rem;
-    margin: 0.25rem 0 0;
+  .cdp-toggle {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    font-size: 0.8rem;
   }
+
 
   .tab-meta {
     display: flex;
